@@ -1,0 +1,27 @@
+modLoader="kotlinforforge"
+loaderVersion="[6.4,)"
+license="MIT"
+
+[[mods]]
+modId="flux"
+version="0.01"
+displayName="flux"
+authors="Micheanl Chen"
+description="Flux"
+
+[[mixins]]
+config="flux.mixins.json"
+
+[[dependencies.flux]]
+modId="neoforge"
+type="required"
+versionRange="[26.3.0.88,)"
+ordering="NONE"
+side="BOTH"
+
+[[dependencies.flux]]
+modId="minecraft"
+type="required"
+versionRange="[26.3]"
+ordering="NONE"
+side="BOTH"
