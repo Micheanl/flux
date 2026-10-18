@@ -1,0 +1,13 @@
+[package]
+name = "assets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+foundation.workspace = true
+gltf.workspace = true
+image.workspace = true
+log.workspace = true
+renderer.workspace = true
