@@ -1,10 +1,11 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use cloth::Cloth;
 use engine::{
-    App, DirectionalLight, Engine, EngineConfig, Entity, Flow, FrameTime, Input, KeyCode,
-    MaterialData, MouseButton, PointLight, Quat, RenderSettings, Transform, Vec3, Vec4,
-    checker_texture, cube, plane, torus, uv_sphere,
+    Aabb, App, DirectionalLight, Engine, EngineConfig, Entity, Flow, FrameTime, Input, KeyCode,
+    MaterialData, MeshData, MouseButton, PointLight, Quat, RenderSettings, Transform, Vec2, Vec3,
+    Vec4, Vertex, checker_texture, cube, plane, torus, uv_sphere,
 };
 use physics::CharacterController;
 
@@ -31,6 +32,13 @@ struct Sandbox {
     stress: Option<u32>,
     stress_seconds: f64,
     bench_start: Option<Instant>,
+    cloth: Option<ClothDemo>,
+}
+
+struct ClothDemo {
+    mesh: u32,
+    simulation: Cloth,
+    obstacle: Vec3,
 }
 
 impl App for Sandbox {
@@ -49,6 +57,7 @@ impl App for Sandbox {
         let stress = std::env::var("FLUX_STRESS")
             .ok()
             .and_then(|value| value.parse().ok());
+        let cloth_mode = std::env::var("FLUX_CLOTH").is_ok_and(|value| value == "1");
         let models = collect_models();
 
         let checker = engine.scene_mut().add_texture(checker_texture(
@@ -83,7 +92,7 @@ impl App for Sandbox {
         settings.shadow_distance = 70.0;
         settings.ambient = 0.18;
 
-        let player_mode = stress.is_none() && (models.is_empty() || auto_walk);
+        let player_mode = stress.is_none() && !cloth_mode && (models.is_empty() || auto_walk);
         let mut sandbox = Self {
             spinners: Vec::new(),
             sun,
@@ -107,10 +116,13 @@ impl App for Sandbox {
             stress,
             stress_seconds: 0.0,
             bench_start: stress.map(|_| Instant::now()),
+            cloth: None,
         };
 
         if let Some(count) = stress {
             setup_stress(engine, count);
+        } else if cloth_mode {
+            sandbox.cloth = Some(setup_cloth_scene(engine));
         } else if sandbox.models.is_empty() {
             setup_showcase(engine, &mut sandbox.spinners);
             engine.set_camera_pose(
@@ -181,6 +193,7 @@ impl App for Sandbox {
 
         self.time += time.delta;
         self.animate(engine);
+        self.update_cloth(engine, time.delta);
         if self.player_mode {
             self.update_player(engine, input, time.delta);
         }
@@ -337,6 +350,22 @@ impl Sandbox {
         engine.set_camera_pose(self.player.eye(), self.player_yaw, self.player_pitch);
     }
 
+    fn update_cloth(&mut self, engine: &mut Engine, dt: f32) {
+        let Some(demo) = &mut self.cloth else {
+            return;
+        };
+        let time = self.time;
+        let wind = Vec3::new(
+            (time * 0.7).sin() * 1.5,
+            (time * 1.1).cos() * 1.8,
+            9.0 + (time * 2.3).sin() * 6.0,
+        );
+        let acceleration = Vec3::new(0.0, -9.8, 0.0) + wind;
+        demo.simulation
+            .step(dt, acceleration, 6, Some((demo.obstacle, 1.15)));
+        engine.update_mesh(demo.mesh, cloth_mesh(&demo.simulation));
+    }
+
     fn animate(&mut self, engine: &mut Engine) {
         let elapsed = self.time;
         let sun_angle = elapsed * 0.08;
@@ -433,6 +462,95 @@ fn looking_at(position: Vec3, target: Vec3) -> (f32, f32) {
     let yaw = (-direction.x).atan2(-direction.z);
     let pitch = direction.y.asin();
     (yaw, pitch)
+}
+
+fn cloth_mesh(cloth: &Cloth) -> MeshData {
+    let width = cloth.width();
+    let height = cloth.height();
+    let positions = cloth.positions();
+    let mut vertices = Vec::with_capacity(width * height);
+    for y in 0..height {
+        for x in 0..width {
+            let index = y * width + x;
+            let left = positions[y * width + x.saturating_sub(1)];
+            let right = positions[y * width + (x + 1).min(width - 1)];
+            let up = positions[y.saturating_sub(1) * width + x];
+            let down = positions[(y + 1).min(height - 1) * width + x];
+            let tangent = (right - left).normalize_or_zero();
+            let normal = tangent
+                .cross((up - down).normalize_or_zero())
+                .normalize_or_zero();
+            vertices.push(Vertex {
+                position: positions[index].to_array(),
+                normal: normal.to_array(),
+                uv: [
+                    x as f32 / (width - 1) as f32,
+                    y as f32 / (height - 1) as f32,
+                ],
+                tangent: [tangent.x, tangent.y, tangent.z, 1.0],
+                joints: [0; 4],
+                weights: [0.0; 4],
+            });
+        }
+    }
+    let bounds = Aabb::from_points(positions.iter().copied());
+    let bounds = Aabb::from_center_extents(bounds.center(), bounds.extents().max(Vec3::splat(0.1)));
+    MeshData {
+        vertices,
+        indices: cloth.indices().to_vec(),
+        bounds,
+    }
+}
+
+fn setup_cloth_scene(engine: &mut Engine) -> ClothDemo {
+    let steel = engine.scene_mut().add_material(MaterialData::pbr(
+        Vec4::new(0.8, 0.82, 0.9, 1.0),
+        1.0,
+        0.18,
+    ));
+    let sphere_mesh = engine.scene_mut().add_mesh(uv_sphere(0.5, 48, 24));
+
+    let simulation = Cloth::new(64, 40, Vec2::new(5.6, 3.6));
+    let mesh = engine.scene_mut().add_mesh(cloth_mesh(&simulation));
+    let texture = engine.scene_mut().add_texture(checker_texture(
+        256,
+        32,
+        [220, 70, 60, 255],
+        [180, 45, 40, 255],
+    ));
+    let material = engine.scene_mut().add_material(
+        MaterialData::pbr(Vec4::splat(1.0), 0.0, 0.5)
+            .with_textures(texture, 1, 2, 3)
+            .with_uv_scale([3.5, 3.5], [0.0, 0.0])
+            .with_double_sided(true),
+    );
+    let transform = Transform {
+        translation: Vec3::new(-2.8, 3.4, 0.0),
+        rotation: Quat::IDENTITY,
+        scale: Vec3::ONE,
+    };
+    engine.scene_mut().spawn_mesh(mesh, material, transform);
+    let obstacle = Vec3::new(2.8, -2.1, 1.5);
+    let obstacle_world = transform.matrix().transform_point3(obstacle);
+    engine.scene_mut().spawn_mesh(
+        sphere_mesh,
+        steel,
+        Transform {
+            translation: obstacle_world,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::splat(2.0),
+        },
+    );
+
+    let camera = Vec3::new(0.0, 2.4, 6.6);
+    let (yaw, pitch) = looking_at(camera, Vec3::new(0.0, 1.8, 0.4));
+    engine.set_camera_pose(camera, yaw, pitch);
+
+    ClothDemo {
+        mesh,
+        simulation,
+        obstacle,
+    }
 }
 
 fn setup_showcase(engine: &mut Engine, spinners: &mut Vec<(Entity, f32)>) {

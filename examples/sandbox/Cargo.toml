@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 engine.workspace = true
+cloth.workspace = true
 physics.workspace = true
 env_logger.workspace = true
 log.workspace = true
