@@ -607,6 +607,27 @@ impl Renderer {
         }
     }
 
+    pub fn update_mesh_vertices(&self, scene: &RenderScene, meshes: &[u32]) {
+        for &mesh_index in meshes {
+            let Some(mesh) = scene.meshes.get(mesh_index as usize) else {
+                continue;
+            };
+            let Some(range) = self.gpu_scene.mesh_ranges.get(mesh_index as usize) else {
+                continue;
+            };
+            if mesh.vertices.len() != range.vertex_count as usize {
+                log::warn!("dynamic mesh topology change is not supported");
+                continue;
+            }
+            let offset = range.base_vertex as u64 * std::mem::size_of::<crate::Vertex>() as u64;
+            self.queue.write_buffer(
+                &self.gpu_scene.vertex_buffer,
+                offset,
+                bytemuck::cast_slice(&mesh.vertices),
+            );
+        }
+    }
+
     fn dispatch_cull(&self, encoder: &mut CommandEncoder, view: usize, instance_count: u32) {
         let dispatch = instance_count.div_ceil(64);
         let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {

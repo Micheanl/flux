@@ -37,6 +37,7 @@ pub struct MeshRange {
     pub first_index: u32,
     pub index_count: u32,
     pub base_vertex: i32,
+    pub vertex_count: u32,
 }
 
 pub struct GpuScene {
@@ -70,6 +71,7 @@ impl GpuScene {
                 first_index: indices.len() as u32,
                 index_count: mesh.indices.len() as u32,
                 base_vertex: vertices.len() as i32,
+                vertex_count: mesh.vertices.len() as u32,
             });
             meshes.push(GpuMesh {
                 index_offset: indices.len() as u32,
