@@ -8,7 +8,7 @@
 @group(1) @binding(6) var shadow_sampler: sampler_comparison;
 @group(2) @binding(0) var<storage, read> instances: array<Instance>;
 @group(2) @binding(1) var<storage, read> materials: array<Material>;
-@group(2) @binding(2) var<storage, read> point_lights: array<PointLight>;
+@group(2) @binding(2) var<storage, read> lights: array<PunctualLight>;
 @group(3) @binding(0) var<storage, read> joint_matrices: array<mat4x4<f32>>;
 
 struct VertexInput {
@@ -65,12 +65,12 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     var output: VertexOutput;
     if ((instance.flags & 1u) != 0u) {
         let skin = skin_matrix(instance, input.joints, input.weights);
-        let world = skin * vec4<f32>(input.position, 1.0);
-        output.clip = frame.view_proj * skin * vec4<f32>(input.position, 1.0);
+        let world = instance.model * skin * vec4<f32>(input.position, 1.0);
+        output.clip = frame.view_proj * instance.model * skin * vec4<f32>(input.position, 1.0);
         output.world_pos = world.xyz;
-        output.normal = normalize((skin * vec4<f32>(input.normal, 0.0)).xyz);
+        output.normal = normalize((instance.model * skin * vec4<f32>(input.normal, 0.0)).xyz);
         output.tangent = vec4<f32>(
-            normalize((skin * vec4<f32>(input.tangent.xyz, 0.0)).xyz),
+            normalize((instance.model * skin * vec4<f32>(input.tangent.xyz, 0.0)).xyz),
             input.tangent.w,
         );
     } else {
@@ -181,6 +181,18 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @l
     let sky_diffuse = sky_color(shading_normal, light_dir, frame.sun_color.rgb, frame.sun_dir.w);
     let reflected = reflect(-view_dir, shading_normal);
     let sky_specular = sky_color(reflected, light_dir, frame.sun_color.rgb, frame.sun_dir.w);
+    if (frame.params.y > 0.5) {
+        let ndl = max(dot(shading_normal, light_dir), 0.0);
+        let bands = floor(ndl * 3.0 + 0.5) / 3.0;
+        let tone = mix(vec3<f32>(0.28), vec3<f32>(0.78), bands);
+        var toon = albedo * sun_color * tone * 0.5;
+        toon = toon * mix(0.55, 1.0, shadow);
+        toon = toon + material.emissive_metallic.rgb * emissive_texture.rgb;
+        let rim = 1.0 - max(dot(view_dir, shading_normal), 0.0);
+        toon = mix(toon, toon * 0.2, smoothstep(0.72, 0.95, rim));
+        return vec4<f32>(toon, alpha);
+    }
+
     let f0 = mix(vec3<f32>(0.04), albedo, metallic);
     let ambient_fresnel = fresnel_schlick(max(dot(view_dir, shading_normal), 0.0), f0);
     color += sky_diffuse * albedo * (1.0 - metallic) * ambient_scale;
@@ -189,12 +201,17 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @l
 
     let point_count = u32(frame.params.w);
     for (var index = 0u; index < point_count; index = index + 1u) {
-        let light = point_lights[index];
+        let light = lights[index];
         let to_light = light.position.xyz - input.world_pos;
         let distance = length(to_light);
         let to_light_dir = to_light / max(distance, 1e-4);
-        if (dot(shading_normal, to_light_dir) > 0.0) {
-            let attenuation = point_light_attenuation(distance, light.position.w);
+        var cone = 1.0;
+        if (light.color.w > 0.5) {
+            let angle_cos = dot(-to_light_dir, normalize(light.direction.xyz));
+            cone = smoothstep(light.cone.x, light.direction.w, angle_cos);
+        }
+        if (dot(shading_normal, to_light_dir) > 0.0 && cone > 0.0) {
+            let attenuation = point_light_attenuation(distance, light.position.w) * cone;
             color += evaluate_brdf(
                 shading_normal,
                 view_dir,

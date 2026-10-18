@@ -15,7 +15,7 @@ use crate::uniforms::{
     ViewUniform,
 };
 
-const MAX_JOINTS: usize = 16384;
+const INITIAL_JOINT_CAPACITY: usize = 16384;
 const TRANSPARENT_VIEW: usize = 1 + MAX_CASCADES;
 
 pub struct RenderStats {
@@ -52,6 +52,7 @@ pub struct Renderer {
     count_buffer: Buffer,
     joint_buffer: Buffer,
     joint_bind_group: BindGroup,
+    joint_capacity: usize,
     targets: Targets,
     cascades: Cascades,
     frame_index: u64,
@@ -111,20 +112,8 @@ impl Renderer {
         let target_bindings = bindings::target_bindings(&device, &queue, &passes, &targets);
         let depth_textures_bind_group = depth_textures_bind_group(&device, &passes, &gpu_scene);
 
-        let joint_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("joint matrices"),
-            size: MAX_JOINTS as u64 * std::mem::size_of::<Mat4>() as u64,
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let joint_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("joint matrices bindings"),
-            layout: &passes.skin_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: joint_buffer.as_entire_binding(),
-            }],
-        });
+        let (joint_buffer, joint_bind_group) =
+            joint_resources(&device, &passes, INITIAL_JOINT_CAPACITY);
 
         Self {
             device,
@@ -145,6 +134,7 @@ impl Renderer {
             count_buffer,
             joint_buffer,
             joint_bind_group,
+            joint_capacity: INITIAL_JOINT_CAPACITY,
             targets,
             cascades: Cascades {
                 matrices: [Mat4::IDENTITY; MAX_CASCADES],
@@ -278,7 +268,14 @@ impl Renderer {
 
         self.gpu_scene.update_instances(&self.queue, scene);
         self.gpu_scene.update_lights(&self.queue, scene);
-        let joint_count = scene.joint_matrices.len().min(MAX_JOINTS);
+        let joint_count = scene.joint_matrices.len();
+        if joint_count > self.joint_capacity {
+            let capacity = joint_count.next_power_of_two();
+            let (buffer, bind_group) = joint_resources(&self.device, &self.passes, capacity);
+            self.joint_buffer = buffer;
+            self.joint_bind_group = bind_group;
+            self.joint_capacity = capacity;
+        }
         if joint_count > 0 {
             self.queue.write_buffer(
                 &self.joint_buffer,
@@ -354,10 +351,10 @@ impl Renderer {
             ),
             params: foundation::Vec4::new(
                 camera.near,
-                cascade_count as f32,
+                if settings.toon { 1.0 } else { 0.0 },
                 shadow_distance,
                 scene
-                    .point_lights
+                    .lights
                     .len()
                     .min(self.gpu_scene.light_capacity as usize) as f32,
             ),
@@ -730,4 +727,22 @@ fn depth_textures_bind_group(device: &Device, passes: &Passes, scene: &GpuScene)
             },
         ],
     })
+}
+
+fn joint_resources(device: &Device, passes: &Passes, capacity: usize) -> (Buffer, BindGroup) {
+    let buffer = device.create_buffer(&BufferDescriptor {
+        label: Some("joint matrices"),
+        size: capacity as u64 * std::mem::size_of::<Mat4>() as u64,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let bind_group = device.create_bind_group(&BindGroupDescriptor {
+        label: Some("joint matrices bindings"),
+        layout: &passes.skin_layout,
+        entries: &[BindGroupEntry {
+            binding: 0,
+            resource: buffer.as_entire_binding(),
+        }],
+    });
+    (buffer, bind_group)
 }

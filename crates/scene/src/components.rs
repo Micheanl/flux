@@ -72,6 +72,33 @@ impl PointLight {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct SpotLight {
+    pub color: Vec3,
+    pub intensity: f32,
+    pub radius: f32,
+    pub inner_angle: f32,
+    pub outer_angle: f32,
+}
+
+impl SpotLight {
+    pub fn new(
+        color: Vec3,
+        intensity: f32,
+        radius: f32,
+        inner_angle: f32,
+        outer_angle: f32,
+    ) -> Self {
+        Self {
+            color,
+            intensity,
+            radius,
+            inner_angle,
+            outer_angle,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct Parent(pub Entity);
 
 #[derive(Clone, Debug, Default)]

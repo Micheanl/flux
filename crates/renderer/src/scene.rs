@@ -96,20 +96,49 @@ impl Default for SunLight {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct PointLight {
+pub struct PunctualLight {
     pub position: Vec3,
+    pub direction: Vec3,
     pub color: Vec3,
     pub intensity: f32,
     pub radius: f32,
+    pub inner_cos: f32,
+    pub outer_cos: f32,
+    pub spot: bool,
 }
 
-impl PointLight {
-    pub fn new(position: Vec3, color: Vec3, intensity: f32) -> Self {
+impl PunctualLight {
+    pub fn point(position: Vec3, color: Vec3, intensity: f32, radius: f32) -> Self {
         Self {
             position,
+            direction: Vec3::ZERO,
             color,
             intensity,
-            radius: 12.0,
+            radius,
+            inner_cos: 1.0,
+            outer_cos: 0.0,
+            spot: false,
+        }
+    }
+
+    pub fn spot(
+        position: Vec3,
+        direction: Vec3,
+        color: Vec3,
+        intensity: f32,
+        radius: f32,
+        inner_angle: f32,
+        outer_angle: f32,
+    ) -> Self {
+        Self {
+            position,
+            direction: direction.normalize_or_zero(),
+            color,
+            intensity,
+            radius,
+            inner_cos: inner_angle.cos(),
+            outer_cos: outer_angle.cos(),
+            spot: true,
         }
     }
 }
@@ -120,6 +149,7 @@ pub struct RenderSettings {
     pub bloom: f32,
     pub shadow_distance: f32,
     pub ambient: f32,
+    pub toon: bool,
 }
 
 impl Default for RenderSettings {
@@ -129,6 +159,7 @@ impl Default for RenderSettings {
             bloom: 0.08,
             shadow_distance: 120.0,
             ambient: 0.15,
+            toon: false,
         }
     }
 }
@@ -138,7 +169,7 @@ pub struct RenderScene {
     pub revision: u64,
     pub camera: CameraData,
     pub sun: SunLight,
-    pub point_lights: Vec<PointLight>,
+    pub lights: Vec<PunctualLight>,
     pub meshes: Vec<MeshData>,
     pub materials: Vec<MaterialData>,
     pub textures: Vec<TextureData>,

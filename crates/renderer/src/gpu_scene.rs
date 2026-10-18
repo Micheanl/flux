@@ -4,7 +4,7 @@ use wgpu::{Buffer, BufferDescriptor, BufferUsages, Device, Queue};
 
 use crate::config::RendererConfig;
 use crate::mesh::MaterialData;
-use crate::scene::{PointLight, RenderScene};
+use crate::scene::{PunctualLight, RenderScene};
 use crate::textures::{TextureArrays, upload_textures};
 
 #[repr(C)]
@@ -18,16 +18,20 @@ struct GpuMesh {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct GpuPointLight {
+struct GpuLight {
     position: Vec4,
     color: Vec4,
+    direction: Vec4,
+    cone: Vec4,
 }
 
-impl From<&PointLight> for GpuPointLight {
-    fn from(light: &PointLight) -> Self {
+impl From<&PunctualLight> for GpuLight {
+    fn from(light: &PunctualLight) -> Self {
         Self {
             position: light.position.extend(light.radius),
-            color: (light.color * light.intensity).extend(0.0),
+            color: (light.color * light.intensity).extend(if light.spot { 1.0 } else { 0.0 }),
+            direction: light.direction.extend(light.inner_cos),
+            cone: Vec4::new(light.outer_cos, 0.0, 0.0, 0.0),
         }
     }
 }
@@ -135,7 +139,7 @@ impl GpuScene {
         let light_buffer = create_buffer(
             device,
             "point lights",
-            light_capacity as u64 * std::mem::size_of::<GpuPointLight>() as u64,
+            light_capacity as u64 * std::mem::size_of::<GpuLight>() as u64,
             BufferUsages::STORAGE | BufferUsages::COPY_DST,
         );
 
@@ -168,12 +172,9 @@ impl GpuScene {
     }
 
     pub fn update_lights(&self, queue: &Queue, scene: &RenderScene) {
-        let count = scene.point_lights.len().min(self.light_capacity as usize);
+        let count = scene.lights.len().min(self.light_capacity as usize);
         if count > 0 {
-            let lights: Vec<GpuPointLight> = scene.point_lights[..count]
-                .iter()
-                .map(GpuPointLight::from)
-                .collect();
+            let lights: Vec<GpuLight> = scene.lights[..count].iter().map(GpuLight::from).collect();
             queue.write_buffer(&self.light_buffer, 0, cast_slice(&lights));
         }
     }

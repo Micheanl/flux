@@ -3,13 +3,13 @@ use std::collections::HashMap;
 use ecs::{Entity, World};
 use foundation::{Aabb, Camera as ViewCamera, Mat4, Vec3};
 use renderer::{
-    CameraData, InstanceData, MaterialData, MeshData, PointLight as RenderPointLight, RenderScene,
-    SunLight, TextureData,
+    CameraData, InstanceData, MaterialData, MeshData, PunctualLight, RenderScene, SunLight,
+    TextureData,
 };
 
 use crate::components::{
     CameraComponent, Children, DirectionalLight, GlobalTransform, MeshRenderer, Name, Parent,
-    PointLight, Skin, Transform,
+    PointLight, Skin, SpotLight, Transform,
 };
 
 #[derive(Default)]
@@ -99,6 +99,10 @@ impl Scene {
         self.spawn((transform, GlobalTransform(transform.matrix()), light))
     }
 
+    pub fn spawn_spot_light(&mut self, transform: Transform, light: SpotLight) -> Entity {
+        self.spawn((transform, GlobalTransform(transform.matrix()), light))
+    }
+
     pub fn set_active_camera(&mut self, entity: Entity) {
         self.active_camera = Some(entity);
     }
@@ -135,14 +139,34 @@ impl Scene {
         }
     }
 
+    pub fn subtree(&self, root: Entity) -> Vec<Entity> {
+        let mut entities = vec![root];
+        let mut index = 0;
+        while index < entities.len() {
+            if let Some(children) = self.world.get::<Children>(entities[index]) {
+                entities.extend(children.0.iter().copied());
+            }
+            index += 1;
+        }
+        entities
+    }
+
     pub fn collision_boxes(&self) -> Vec<physics::Obb> {
+        self.collision_boxes_except(&[])
+    }
+
+    pub fn collision_boxes_except(&self, excluded: &[Entity]) -> Vec<physics::Obb> {
+        let excluded: std::collections::HashSet<Entity> = excluded.iter().copied().collect();
         let render = &self.render;
         let mut boxes = Vec::new();
-        for (mesh_renderer, global) in self
+        for (entity, mesh_renderer, global) in self
             .world
-            .query::<(&MeshRenderer, &GlobalTransform)>()
+            .query::<(Entity, &MeshRenderer, &GlobalTransform)>()
             .iter()
         {
+            if excluded.contains(&entity) {
+                continue;
+            }
             let Some(mesh) = render.meshes.get(mesh_renderer.mesh as usize) else {
                 continue;
             };
@@ -250,17 +274,36 @@ impl Scene {
         if let Some(sun) = sun {
             self.render.sun = sun;
         }
-        self.render.point_lights = self
+        let mut lights: Vec<PunctualLight> = self
             .world
             .query::<(&PointLight, &GlobalTransform)>()
             .iter()
-            .map(|(light, global)| RenderPointLight {
-                position: global.translation(),
-                color: light.color,
-                intensity: light.intensity,
-                radius: light.radius,
+            .map(|(light, global)| {
+                PunctualLight::point(
+                    global.translation(),
+                    light.color,
+                    light.intensity,
+                    light.radius,
+                )
             })
             .collect();
+        lights.extend(
+            self.world
+                .query::<(&SpotLight, &GlobalTransform)>()
+                .iter()
+                .map(|(light, global)| {
+                    PunctualLight::spot(
+                        global.translation(),
+                        global.forward(),
+                        light.color,
+                        light.intensity,
+                        light.radius,
+                        light.inner_angle,
+                        light.outer_angle,
+                    )
+                }),
+        );
+        self.render.lights = lights;
     }
 
     fn extract_instances(&mut self) {
@@ -280,10 +323,11 @@ impl Scene {
                 let bounds: Aabb = mesh.bounds;
                 if let Some(skin) = skin {
                     let skin_offset = joint_matrices.len() as u32;
+                    let instance_inverse = global.0.inverse();
                     for (joint, inverse_bind) in skin.joints.iter().zip(&skin.inverse_bind_matrices)
                     {
                         let joint_global = globals.get(joint).copied().unwrap_or(Mat4::IDENTITY);
-                        joint_matrices.push(joint_global * *inverse_bind);
+                        joint_matrices.push(instance_inverse * joint_global * *inverse_bind);
                     }
                     instances.push(InstanceData::skinned(
                         global.0,
@@ -310,6 +354,21 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extracts_spot_lights() {
+        let mut scene = Scene::new();
+        scene.spawn_spot_light(
+            Transform::looking_at(Vec3::new(0.0, 5.0, 2.0), Vec3::ZERO, Vec3::Y),
+            SpotLight::new(Vec3::new(1.0, 0.5, 0.2), 20.0, 12.0, 0.2, 0.5),
+        );
+        scene.extract(1.0);
+        let lights = &scene.render().lights;
+        assert_eq!(lights.len(), 1);
+        assert!(lights[0].spot);
+        assert!(lights[0].direction.y < -0.9);
+        assert!(lights[0].inner_cos > lights[0].outer_cos);
+    }
 
     #[test]
     fn hierarchy_accumulates() {

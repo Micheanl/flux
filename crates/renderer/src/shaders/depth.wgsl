@@ -33,7 +33,7 @@ fn vs_depth(input: DepthInput) -> DepthOutput {
     var output: DepthOutput;
     if ((instance.flags & 1u) != 0u) {
         let skin = skin_matrix(instance, input.joints, input.weights);
-        output.clip = view.view_proj * skin * vec4<f32>(input.position, 1.0);
+        output.clip = view.view_proj * instance.model * skin * vec4<f32>(input.position, 1.0);
     } else {
         output.clip = view.view_proj * instance.model * vec4<f32>(input.position, 1.0);
     }

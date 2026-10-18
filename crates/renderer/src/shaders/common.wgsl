@@ -48,9 +48,11 @@ struct Material {
     flags: vec4<f32>,
 };
 
-struct PointLight {
+struct PunctualLight {
     position: vec4<f32>,
     color: vec4<f32>,
+    direction: vec4<f32>,
+    cone: vec4<f32>,
 };
 
 struct DrawArgs {

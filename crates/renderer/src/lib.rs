@@ -19,4 +19,4 @@ pub use mesh::{
 };
 pub use primitives::{cube, plane, torus, uv_sphere};
 pub use renderer::{RenderOutcome, RenderStats, Renderer};
-pub use scene::{CameraData, InstanceData, PointLight, RenderScene, RenderSettings, SunLight};
+pub use scene::{CameraData, InstanceData, PunctualLight, RenderScene, RenderSettings, SunLight};
