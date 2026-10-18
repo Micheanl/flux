@@ -36,6 +36,19 @@ pub struct ModelPrimitive {
     pub mesh: u32,
     pub material: u32,
     pub skin: Option<u32>,
+    pub morph: Option<ModelMorph>,
+}
+
+#[derive(Clone, Debug)]
+pub struct MorphTarget {
+    pub positions: Vec<[f32; 3]>,
+    pub normals: Vec<[f32; 3]>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ModelMorph {
+    pub targets: Vec<MorphTarget>,
+    pub weights: Vec<f32>,
 }
 
 pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
@@ -114,16 +127,35 @@ pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
                 log::warn!("skipping non-triangle primitive: {:?}", primitive.mode());
                 continue;
             }
-            let Some((mesh_data, has_skin)) = read_primitive(&primitive, &buffers) else {
+            let Some((mesh_data, has_skin, morph_targets)) = read_primitive(&primitive, &buffers)
+            else {
                 continue;
             };
             if node_skin.is_some() && !has_skin {
                 log::warn!("skinned primitive is missing JOINT/WEIGHT attributes");
             }
+            let morph = if morph_targets.is_empty() {
+                None
+            } else {
+                let defaults = node
+                    .weights()
+                    .or_else(|| mesh.weights())
+                    .map(|weights| weights.to_vec())
+                    .unwrap_or_default();
+                let mut weights = vec![0.0; morph_targets.len()];
+                for (slot, value) in weights.iter_mut().zip(defaults) {
+                    *slot = value;
+                }
+                Some(ModelMorph {
+                    targets: morph_targets,
+                    weights,
+                })
+            };
             nodes[node.index()].primitives.push(ModelPrimitive {
                 mesh: meshes.len() as u32,
                 material: primitive.material().index().unwrap_or(0) as u32,
                 skin: if has_skin { node_skin } else { None },
+                morph,
             });
             meshes.push(mesh_data);
         }
@@ -205,12 +237,27 @@ fn load_animations(
                     gltf::animation::util::ReadOutputs::Scales(samples) => {
                         TrackValues::Scales(samples.map(Vec3::from_array).collect())
                     }
-                    gltf::animation::util::ReadOutputs::MorphTargetWeights(_) => continue,
+                    gltf::animation::util::ReadOutputs::MorphTargetWeights(weights) => {
+                        let flat: Vec<f32> = weights.into_f32().collect();
+                        if flat.is_empty() || times.is_empty() {
+                            continue;
+                        }
+                        let stride = flat.len() / times.len();
+                        if stride == 0 {
+                            continue;
+                        }
+                        TrackValues::Weights(
+                            flat.chunks_exact(stride)
+                                .map(|chunk| chunk.to_vec())
+                                .collect(),
+                        )
+                    }
                 };
                 let sample_count = match &values {
                     TrackValues::Translations(samples) => samples.len(),
                     TrackValues::Rotations(samples) => samples.len(),
                     TrackValues::Scales(samples) => samples.len(),
+                    TrackValues::Weights(samples) => samples.len(),
                 };
                 if times.len() < 2 || times.len() != sample_count {
                     continue;
@@ -238,7 +285,7 @@ fn load_animations(
 fn read_primitive(
     primitive: &gltf::Primitive<'_>,
     buffers: &[gltf::buffer::Data],
-) -> Option<(MeshData, bool)> {
+) -> Option<(MeshData, bool, Vec<MorphTarget>)> {
     let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()].0));
     let positions: Vec<[f32; 3]> = reader.read_positions()?.collect();
     let indices: Vec<u32> = match reader.read_indices() {
@@ -280,6 +327,18 @@ fn read_primitive(
         })
         .collect();
 
+    let morph_targets: Vec<MorphTarget> = reader
+        .read_morph_targets()
+        .map(|(positions, normals, _)| MorphTarget {
+            positions: positions
+                .map(|iter| iter.collect::<Vec<[f32; 3]>>())
+                .unwrap_or_default(),
+            normals: normals
+                .map(|iter| iter.collect::<Vec<[f32; 3]>>())
+                .unwrap_or_default(),
+        })
+        .collect();
+
     Some((
         MeshData {
             vertices,
@@ -287,6 +346,7 @@ fn read_primitive(
             bounds: Aabb::from_points(positions.iter().map(|position| Vec3::from_array(*position))),
         },
         has_skin,
+        morph_targets,
     ))
 }
 

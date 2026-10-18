@@ -319,3 +319,79 @@ fn loads_material_extensions() {
     assert!((material.emissive_metallic.z - 0.5).abs() < 1e-5);
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn loads_morph_targets_and_weights() {
+    let mut bytes = Vec::new();
+    for position in [[-1.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for value in position {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    for delta in [[0.0f32, 0.5, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]] {
+        for value in delta {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    for time in [0.0f32, 1.0] {
+        bytes.extend_from_slice(&time.to_le_bytes());
+    }
+    for weight in [0.0f32, 1.0] {
+        bytes.extend_from_slice(&weight.to_le_bytes());
+    }
+
+    let json = format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "scene": 0,
+  "scenes": [ {{ "nodes": [0] }} ],
+  "nodes": [ {{ "mesh": 0 }} ],
+  "meshes": [ {{
+    "weights": [0.5],
+    "primitives": [ {{
+      "attributes": {{ "POSITION": 0 }},
+      "targets": [ {{ "POSITION": 1 }} ],
+      "material": 0
+    }} ]
+  }} ],
+  "materials": [ {{ "pbrMetallicRoughness": {{ "baseColorFactor": [1.0, 0.4, 0.4, 1.0] }} }} ],
+  "animations": [ {{
+    "name": "morph",
+    "channels": [ {{ "sampler": 0, "target": {{ "node": 0, "path": "weights" }} }} ],
+    "samplers": [ {{ "input": 2, "output": 3, "interpolation": "LINEAR" }} ]
+  }} ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+       "min": [-1.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] }},
+    {{ "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3" }},
+    {{ "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0] }},
+    {{ "bufferView": 3, "componentType": 5126, "count": 2, "type": "SCALAR" }}
+  ],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
+    {{ "buffer": 0, "byteOffset": 36, "byteLength": 36 }},
+    {{ "buffer": 0, "byteOffset": 72, "byteLength": 8 }},
+    {{ "buffer": 0, "byteOffset": 80, "byteLength": 8 }}
+  ],
+  "buffers": [ {{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }} ]
+}}"#,
+        bytes.len(),
+        base64_encode(&bytes)
+    );
+
+    let path = temp_path("morph.gltf");
+    std::fs::write(&path, json).unwrap();
+    let model = load_gltf(&path).expect("glTF loading failed");
+    let morph = model.nodes[0].primitives[0]
+        .morph
+        .as_ref()
+        .expect("morph targets");
+    assert_eq!(morph.targets.len(), 1);
+    assert_eq!(morph.targets[0].positions.len(), 3);
+    assert_eq!(morph.weights, vec![0.5]);
+    assert_eq!(model.animations.len(), 1);
+    let pose = model.animations[0].sample(0.5);
+    let weights = pose[0].weights.as_ref().expect("sampled weights");
+    assert!((weights[0] - 0.5).abs() < 1e-5);
+    let _ = std::fs::remove_file(path);
+}

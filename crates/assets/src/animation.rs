@@ -13,6 +13,7 @@ pub enum TrackValues {
     Translations(Vec<Vec3>),
     Rotations(Vec<Quat>),
     Scales(Vec<Vec3>),
+    Weights(Vec<Vec<f32>>),
 }
 
 #[derive(Clone, Debug)]
@@ -30,12 +31,13 @@ pub struct AnimationClip {
     pub tracks: Vec<AnimationTrack>,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct NodePose {
     pub node: usize,
     pub translation: Option<Vec3>,
     pub rotation: Option<Quat>,
     pub scale: Option<Vec3>,
+    pub weights: Option<Vec<f32>>,
 }
 
 impl AnimationClip {
@@ -65,6 +67,14 @@ impl AnimationClip {
                 }
                 TrackValues::Scales(values) => {
                     pose.scale = Some(sample_vectors(
+                        &track.times,
+                        values,
+                        track.interpolation,
+                        time,
+                    ));
+                }
+                TrackValues::Weights(values) => {
+                    pose.weights = Some(sample_weights(
                         &track.times,
                         values,
                         track.interpolation,
@@ -109,6 +119,35 @@ fn sample_vectors(times: &[f32], values: &[Vec3], interpolation: Interpolation, 
     match interpolation {
         Interpolation::Step => values[previous],
         Interpolation::Linear => values[previous].lerp(values[next], fraction),
+    }
+}
+
+fn sample_weights(
+    times: &[f32],
+    values: &[Vec<f32>],
+    interpolation: Interpolation,
+    time: f32,
+) -> Vec<f32> {
+    let Some(first) = values.first() else {
+        return Vec::new();
+    };
+    if times.len() < 2 || time <= times[0] {
+        return first.clone();
+    }
+    let Some(last) = values.last() else {
+        return first.clone();
+    };
+    if time >= times[times.len() - 1] {
+        return last.clone();
+    }
+    let (previous, next, fraction) = locate(times, time);
+    match interpolation {
+        Interpolation::Step => values[previous].clone(),
+        Interpolation::Linear => values[previous]
+            .iter()
+            .zip(&values[next])
+            .map(|(from, to)| from + (to - from) * fraction)
+            .collect(),
     }
 }
 
@@ -197,6 +236,24 @@ mod tests {
         let poses = clip().sample(1.5);
         let pose = poses.iter().find(|pose| pose.node == 2).unwrap();
         assert!((pose.scale.unwrap() - Vec3::splat(2.0)).length() < 1e-5);
+    }
+
+    #[test]
+    fn interpolates_morph_weights() {
+        let clip = AnimationClip {
+            name: "morph".to_string(),
+            duration: 1.0,
+            tracks: vec![AnimationTrack {
+                node: 0,
+                interpolation: Interpolation::Linear,
+                times: vec![0.0, 1.0],
+                values: TrackValues::Weights(vec![vec![0.0, 1.0], vec![1.0, 0.0]]),
+            }],
+        };
+        let pose = clip.sample(0.25);
+        let weights = pose[0].weights.as_ref().unwrap();
+        assert!((weights[0] - 0.25).abs() < 1e-5);
+        assert!((weights[1] - 0.75).abs() < 1e-5);
     }
 
     #[test]
