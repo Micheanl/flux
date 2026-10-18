@@ -1,0 +1,195 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "extensionsUsed": [
+    "KHR_lights_punctual"
+  ],
+  "extensions": {
+    "KHR_lights_punctual": {
+      "lights": [
+        {
+          "type": "point",
+          "color": [
+            1.0,
+            0.22,
+            0.18
+          ],
+          "intensity": 20.0,
+          "range": 14.0
+        },
+        {
+          "type": "point",
+          "color": [
+            0.25,
+            0.45,
+            1.0
+          ],
+          "intensity": 20.0,
+          "range": 14.0
+        }
+      ]
+    }
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "center",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.7,
+        0.0
+      ]
+    },
+    {
+      "name": "left",
+      "mesh": 0,
+      "translation": [
+        -3.0,
+        0.7,
+        0.0
+      ]
+    },
+    {
+      "name": "right",
+      "mesh": 0,
+      "translation": [
+        3.0,
+        0.7,
+        0.0
+      ]
+    },
+    {
+      "name": "red light",
+      "translation": [
+        -3.0,
+        1.8,
+        1.2
+      ],
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 0
+        }
+      }
+    },
+    {
+      "name": "blue light",
+      "translation": [
+        3.0,
+        1.8,
+        1.2
+      ],
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 1
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "stone",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.85,
+          0.85,
+          0.85,
+          1.0
+        ],
+        "metallicFactor": 0.05,
+        "roughnessFactor": 0.3
+      }
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [
+        -0.6,
+        -0.6,
+        -0.6
+      ],
+      "max": [
+        0.6,
+        0.6,
+        0.6
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5125,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 288
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 288
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 576,
+      "byteLength": 192
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 768,
+      "byteLength": 144
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 912,
+      "uri": "data:application/octet-stream;base64,mpkZv5qZGb+amRk/mpkZP5qZGb+amRk/mpkZP5qZGT+amRk/mpkZv5qZGT+amRk/mpkZP5qZGb+amRm/mpkZv5qZGb+amRm/mpkZv5qZGT+amRm/mpkZP5qZGT+amRm/mpkZP5qZGb+amRk/mpkZP5qZGb+amRm/mpkZP5qZGT+amRm/mpkZP5qZGT+amRk/mpkZv5qZGb+amRm/mpkZv5qZGb+amRk/mpkZv5qZGT+amRk/mpkZv5qZGT+amRm/mpkZv5qZGT+amRm/mpkZv5qZGT+amRk/mpkZP5qZGT+amRk/mpkZP5qZGT+amRm/mpkZv5qZGb+amRk/mpkZv5qZGb+amRm/mpkZP5qZGb+amRm/mpkZP5qZGb+amRk/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAEAAAACAAAAAAAAAAIAAAADAAAABAAAAAUAAAAGAAAABAAAAAYAAAAHAAAACAAAAAkAAAAKAAAACAAAAAoAAAALAAAADAAAAA0AAAAOAAAADAAAAA4AAAAPAAAAEAAAABEAAAASAAAAEAAAABIAAAATAAAAFAAAABUAAAAWAAAAFAAAABYAAAAXAAAA"
+    }
+  ]
+}
