@@ -8,14 +8,29 @@ pub struct Vertex {
     pub normal: [f32; 3],
     pub uv: [f32; 2],
     pub tangent: [f32; 4],
+    pub joints: [u16; 4],
+    pub weights: [f32; 4],
 }
 
 impl Vertex {
-    pub const ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+    pub fn new(position: [f32; 3], normal: [f32; 3], uv: [f32; 2], tangent: [f32; 4]) -> Self {
+        Self {
+            position,
+            normal,
+            uv,
+            tangent,
+            joints: [0; 4],
+            weights: [0.0; 4],
+        }
+    }
+
+    pub const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
         0 => Float32x3,
         1 => Float32x3,
         2 => Float32x2,
         3 => Float32x4,
+        4 => Uint16x4,
+        5 => Float32x4,
     ];
 
     pub const LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {

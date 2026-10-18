@@ -30,12 +30,12 @@ pub fn cube(size: f32) -> MeshData {
         let uvs = [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)];
         let base = vertices.len() as u32;
         for (corner, uv) in corners.iter().zip(uvs) {
-            vertices.push(Vertex {
-                position: corner.to_array(),
-                normal: normal_out,
-                uv: [uv.0, uv.1],
+            vertices.push(Vertex::new(
+                corner.to_array(),
+                normal_out,
+                [uv.0, uv.1],
                 tangent,
-            });
+            ));
         }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
@@ -52,12 +52,12 @@ pub fn plane(size: f32, segments: u32) -> MeshData {
         for x in 0..=segments {
             let px = -half + x as f32 * step;
             let pz = -half + z as f32 * step;
-            vertices.push(Vertex {
-                position: [px, 0.0, pz],
-                normal: [0.0, 1.0, 0.0],
-                uv: [x as f32 / segments as f32, z as f32 / segments as f32],
-                tangent: [1.0, 0.0, 0.0, 1.0],
-            });
+            vertices.push(Vertex::new(
+                [px, 0.0, pz],
+                [0.0, 1.0, 0.0],
+                [x as f32 / segments as f32, z as f32 / segments as f32],
+                [1.0, 0.0, 0.0, 1.0],
+            ));
         }
     }
     let mut indices = Vec::with_capacity((segments * segments * 6) as usize);
@@ -94,12 +94,12 @@ pub fn uv_sphere(radius: f32, segments: u32, rings: u32) -> MeshData {
             let normal = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
             let position = normal * radius;
             let tangent = Vec3::new(-theta.sin(), 0.0, theta.cos()).normalize_or_zero();
-            vertices.push(Vertex {
-                position: position.to_array(),
-                normal: normal.to_array(),
-                uv: [u, v],
-                tangent: tangent.extend(1.0).to_array(),
-            });
+            vertices.push(Vertex::new(
+                position.to_array(),
+                normal.to_array(),
+                [u, v],
+                tangent.extend(1.0).to_array(),
+            ));
         }
     }
 
@@ -134,12 +134,12 @@ pub fn torus(
             let normal = Vec3::new(theta.cos() * phi.cos(), phi.sin(), theta.sin() * phi.cos());
             let position = center + normal * minor_radius;
             let tangent = Vec3::new(-theta.sin(), 0.0, theta.cos()).normalize_or_zero();
-            vertices.push(Vertex {
-                position: position.to_array(),
-                normal: normal.to_array(),
-                uv: [u, v],
-                tangent: tangent.extend(1.0).to_array(),
-            });
+            vertices.push(Vertex::new(
+                position.to_array(),
+                normal.to_array(),
+                [u, v],
+                tangent.extend(1.0).to_array(),
+            ));
         }
     }
     let mut indices = Vec::new();

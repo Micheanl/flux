@@ -7,11 +7,23 @@ use crate::mesh::Vertex;
 use crate::shaders;
 use crate::uniforms::VIEW_UNIFORM_STRIDE;
 
-const DEPTH_ATTRIBUTES: [VertexAttribute; 1] = [VertexAttribute {
-    format: VertexFormat::Float32x3,
-    offset: 0,
-    shader_location: 0,
-}];
+const DEPTH_ATTRIBUTES: [VertexAttribute; 3] = [
+    VertexAttribute {
+        format: VertexFormat::Float32x3,
+        offset: 0,
+        shader_location: 0,
+    },
+    VertexAttribute {
+        format: VertexFormat::Uint16x4,
+        offset: std::mem::offset_of!(Vertex, joints) as u64,
+        shader_location: 4,
+    },
+    VertexAttribute {
+        format: VertexFormat::Float32x4,
+        offset: std::mem::offset_of!(Vertex, weights) as u64,
+        shader_location: 5,
+    },
+];
 
 const DEPTH_LAYOUT: VertexBufferLayout<'static> = VertexBufferLayout {
     array_stride: std::mem::size_of::<Vertex>() as u64,
@@ -28,6 +40,7 @@ pub struct Passes {
     pub cull_output_layout: BindGroupLayout,
     pub bloom_layout: BindGroupLayout,
     pub tonemap_layout: BindGroupLayout,
+    pub skin_layout: BindGroupLayout,
 
     pub mesh_pipeline: RenderPipeline,
     pub depth_pipeline: RenderPipeline,
@@ -154,10 +167,20 @@ impl Passes {
         let bloom_module = shader_module(device, "bloom");
         let tonemap_module = shader_module(device, "tonemap");
 
+        let skin_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("skin"),
+            entries: &[storage_entry(0, ShaderStages::VERTEX, true)],
+        });
+
         let mesh_pipeline_layout = pipeline_layout(
             device,
             "opaque layout",
-            &[&frame_layout, &textures_layout, &storage_layout],
+            &[
+                &frame_layout,
+                &textures_layout,
+                &storage_layout,
+                &skin_layout,
+            ],
         );
         let empty_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("empty group"),
@@ -166,7 +189,7 @@ impl Passes {
         let depth_pipeline_layout = pipeline_layout(
             device,
             "depth layout",
-            &[&view_layout, &empty_layout, &storage_layout],
+            &[&view_layout, &empty_layout, &storage_layout, &skin_layout],
         );
         let sky_pipeline_layout = pipeline_layout(device, "sky layout", &[&frame_layout]);
         let cull_pipeline_layout = pipeline_layout(
@@ -392,6 +415,7 @@ impl Passes {
             cull_output_layout,
             bloom_layout,
             tonemap_layout,
+            skin_layout,
             mesh_pipeline,
             depth_pipeline,
             shadow_pipeline,

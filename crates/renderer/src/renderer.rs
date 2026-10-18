@@ -15,6 +15,8 @@ use crate::uniforms::{
     ViewUniform,
 };
 
+const MAX_JOINTS: usize = 16384;
+
 pub struct RenderStats {
     pub frame_index: u64,
     pub instances: u32,
@@ -46,6 +48,8 @@ pub struct Renderer {
     target_bindings: TargetBindings,
     draw_buffer: Buffer,
     count_buffer: Buffer,
+    joint_buffer: Buffer,
+    joint_bind_group: BindGroup,
     targets: Targets,
     cascades: Cascades,
     frame_index: u64,
@@ -104,6 +108,21 @@ impl Renderer {
         );
         let target_bindings = bindings::target_bindings(&device, &queue, &passes, &targets);
 
+        let joint_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("joint matrices"),
+            size: MAX_JOINTS as u64 * std::mem::size_of::<Mat4>() as u64,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let joint_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("joint matrices bindings"),
+            layout: &passes.skin_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: joint_buffer.as_entire_binding(),
+            }],
+        });
+
         Self {
             device,
             queue,
@@ -120,6 +139,8 @@ impl Renderer {
             target_bindings,
             draw_buffer,
             count_buffer,
+            joint_buffer,
+            joint_bind_group,
             targets,
             cascades: Cascades {
                 matrices: [Mat4::IDENTITY; MAX_CASCADES],
@@ -251,6 +272,14 @@ impl Renderer {
 
         self.gpu_scene.update_instances(&self.queue, scene);
         self.gpu_scene.update_lights(&self.queue, scene);
+        let joint_count = scene.joint_matrices.len().min(MAX_JOINTS);
+        if joint_count > 0 {
+            self.queue.write_buffer(
+                &self.joint_buffer,
+                0,
+                bytemuck::cast_slice(&scene.joint_matrices[..joint_count]),
+            );
+        }
         self.write_uniforms(scene, width, height);
         self.frame_index += 1;
     }
@@ -387,6 +416,7 @@ impl Renderer {
                 &[((cascade + 1) as u32) * VIEW_UNIFORM_STRIDE as u32],
             );
             pass.set_bind_group(2, &self.scene_bindings.storage, &[]);
+            pass.set_bind_group(3, &self.joint_bind_group, &[]);
             self.draw_geometry(&mut pass, scene, cascade + 1, instance_count);
         }
 
@@ -409,6 +439,7 @@ impl Renderer {
             pass.set_pipeline(&self.passes.depth_pipeline);
             pass.set_bind_group(0, &self.view_bind_group, &[0u32]);
             pass.set_bind_group(2, &self.scene_bindings.storage, &[]);
+            pass.set_bind_group(3, &self.joint_bind_group, &[]);
             self.draw_geometry(&mut pass, scene, 0, instance_count);
         }
 
@@ -440,6 +471,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.frame_bind_group, &[]);
             pass.set_bind_group(1, &self.scene_bindings.textures, &[]);
             pass.set_bind_group(2, &self.scene_bindings.storage, &[]);
+            pass.set_bind_group(3, &self.joint_bind_group, &[]);
             self.draw_geometry(&mut pass, scene, 0, instance_count);
         }
 

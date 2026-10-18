@@ -29,7 +29,7 @@ struct Instance {
     mesh: u32,
     material: u32,
     flags: u32,
-    _pad: u32,
+    skin_offset: u32,
 };
 
 struct Mesh {

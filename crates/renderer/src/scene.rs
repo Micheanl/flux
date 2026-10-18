@@ -12,7 +12,7 @@ pub struct InstanceData {
     pub mesh: u32,
     pub material: u32,
     pub flags: u32,
-    pub _pad: u32,
+    pub skin_offset: u32,
 }
 
 impl InstanceData {
@@ -25,7 +25,28 @@ impl InstanceData {
             mesh,
             material,
             flags: 0,
-            _pad: 0,
+            skin_offset: 0,
+        }
+    }
+
+    pub fn skinned(
+        model: Mat4,
+        local_bounds: &Aabb,
+        mesh: u32,
+        material: u32,
+        skin_offset: u32,
+    ) -> Self {
+        let bounds = local_bounds.transform(&model);
+        let expanded =
+            Aabb::from_center_extents(bounds.center(), bounds.extents() * 2.0 + Vec3::splat(0.5));
+        Self {
+            model,
+            bounds_min: expanded.min.extend(0.0),
+            bounds_max: expanded.max.extend(0.0),
+            mesh,
+            material,
+            flags: 1,
+            skin_offset,
         }
     }
 }
@@ -122,6 +143,7 @@ pub struct RenderScene {
     pub materials: Vec<MaterialData>,
     pub textures: Vec<TextureData>,
     pub instances: Vec<InstanceData>,
+    pub joint_matrices: Vec<Mat4>,
     pub settings: RenderSettings,
 }
 
