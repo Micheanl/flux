@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use engine::{
     App, DirectionalLight, Engine, EngineConfig, Entity, Flow, FrameTime, Input, KeyCode,
     MaterialData, PointLight, Quat, RenderSettings, Transform, Vec3, Vec4, checker_texture, cube,
@@ -9,25 +11,31 @@ struct Sandbox {
     sun: Entity,
     time: f32,
     capture: Option<String>,
+    capture_each: Option<PathBuf>,
+    captured: bool,
     frame_limit: u64,
     frame: u64,
-    model_path: Option<std::path::PathBuf>,
+    models: Vec<PathBuf>,
+    model_index: usize,
     model_root: Option<Entity>,
     animation_count: usize,
     animation_index: usize,
+    auto_cycle: bool,
 }
 
 impl App for Sandbox {
     fn setup(engine: &mut Engine) -> Self {
         let capture = std::env::var("FLUX_CAPTURE").ok();
+        let capture_each = std::env::var("FLUX_CAPTURE_EACH").ok().map(PathBuf::from);
+        if let Some(directory) = &capture_each {
+            std::fs::create_dir_all(directory).ok();
+        }
         let frame_limit = std::env::var("FLUX_FRAMES")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(u64::MAX);
-        let model_path = std::env::var("FLUX_MODEL")
-            .ok()
-            .map(std::path::PathBuf::from);
-        let mut spinners = Vec::new();
+        let auto_cycle = std::env::var("FLUX_MODEL_AUTO").is_ok_and(|value| value == "1");
+        let models = collect_models();
 
         let checker = engine.scene_mut().add_texture(checker_texture(
             512,
@@ -47,30 +55,6 @@ impl App for Sandbox {
             Transform::from_translation(Vec3::ZERO),
         );
 
-        let mut model_root = None;
-        let mut animation_count = 0;
-        let animation_index = 0;
-        if let Some(path) = &model_path {
-            match engine.spawn_model(path) {
-                Ok(root) => {
-                    model_root = Some(root);
-                    animation_count = engine.animation_count(root);
-                    if animation_count > 0 {
-                        engine.play_animation(root, 0);
-                    } else {
-                        spinners.push((root, 0.35));
-                    }
-                    engine.set_camera_pose(Vec3::new(0.0, 1.6, 5.0), 0.0, -0.12);
-                    log::info!("model mode: {}", path.display());
-                }
-                Err(error) => log::error!("model loading failed: {error}"),
-            }
-        }
-        if model_root.is_none() {
-            setup_showcase(engine, &mut spinners);
-            engine.set_camera_pose(Vec3::new(0.0, 6.0, 26.0), 0.0, -0.18);
-        }
-
         let sun = {
             let direction = Vec3::new(0.45, 0.8, 0.35).normalize();
             engine.scene_mut().spawn_sun(
@@ -85,18 +69,30 @@ impl App for Sandbox {
         settings.shadow_distance = 70.0;
         settings.ambient = 0.18;
 
-        Self {
-            spinners,
+        let mut sandbox = Self {
+            spinners: Vec::new(),
             sun,
             time: 0.0,
             capture,
+            capture_each,
+            captured: false,
             frame_limit,
             frame: 0,
-            model_path,
-            model_root,
-            animation_count,
-            animation_index,
+            models,
+            model_index: 0,
+            model_root: None,
+            animation_count: 0,
+            animation_index: 0,
+            auto_cycle,
+        };
+
+        if sandbox.models.is_empty() {
+            setup_showcase(engine, &mut sandbox.spinners);
+            engine.set_camera_pose(Vec3::new(0.0, 6.0, 26.0), 0.0, -0.18);
+        } else {
+            sandbox.load_model(engine, 0);
         }
+        sandbox
     }
 
     fn update(&mut self, engine: &mut Engine, input: &Input, time: FrameTime) -> Flow {
@@ -114,8 +110,18 @@ impl App for Sandbox {
         if input.key_pressed(KeyCode::KeyN) {
             self.next_animation(engine);
         }
+        if input.key_pressed(KeyCode::ArrowRight) || input.key_pressed(KeyCode::PageDown) {
+            self.step_model(engine, 1);
+        }
+        if input.key_pressed(KeyCode::ArrowLeft) || input.key_pressed(KeyCode::PageUp) {
+            self.step_model(engine, -1);
+        }
 
         self.frame += 1;
+        if self.auto_cycle && !self.models.is_empty() && self.frame.is_multiple_of(40) {
+            self.step_model(engine, 1);
+        }
+        self.capture_model_once(engine);
         if self.frame >= self.frame_limit {
             if let Some(path) = self.capture.clone()
                 && let Err(error) = engine.save_screenshot(&path)
@@ -132,17 +138,15 @@ impl App for Sandbox {
 }
 
 impl Sandbox {
-    fn reload_model(&mut self, engine: &mut Engine) {
-        let Some(path) = self.model_path.clone() else {
+    fn load_model(&mut self, engine: &mut Engine, index: usize) {
+        let Some(path) = self.models.get(index).cloned() else {
             return;
         };
-        if let Some(root) = self.model_root.take() {
-            engine.scene_mut().despawn_recursive(root);
-        }
+        self.clear_model(engine);
+        self.model_index = index;
         match engine.spawn_model(&path) {
             Ok(root) => {
                 self.model_root = Some(root);
-                self.spinners.retain(|(entity, _)| *entity != root);
                 self.animation_count = engine.animation_count(root);
                 self.animation_index = 0;
                 if self.animation_count > 0 {
@@ -150,10 +154,42 @@ impl Sandbox {
                 } else {
                     self.spinners.push((root, 0.35));
                 }
-                log::info!("model reloaded: {}", path.display());
+                engine.frame_model(root);
+                log::info!(
+                    "model {}/{}: {}",
+                    index + 1,
+                    self.models.len(),
+                    path.display()
+                );
             }
-            Err(error) => log::error!("model reload failed: {error}"),
+            Err(error) => log::error!("model loading failed: {error}"),
         }
+        self.captured = false;
+    }
+
+    fn clear_model(&mut self, engine: &mut Engine) {
+        if let Some(root) = self.model_root.take() {
+            engine.scene_mut().despawn_recursive(root);
+            self.spinners.retain(|(entity, _)| *entity != root);
+        }
+        self.animation_count = 0;
+        self.animation_index = 0;
+    }
+
+    fn step_model(&mut self, engine: &mut Engine, step: isize) {
+        if self.models.is_empty() {
+            return;
+        }
+        let count = self.models.len() as isize;
+        let index = (self.model_index as isize + step).rem_euclid(count) as usize;
+        self.load_model(engine, index);
+    }
+
+    fn reload_model(&mut self, engine: &mut Engine) {
+        if self.models.is_empty() {
+            return;
+        }
+        self.load_model(engine, self.model_index);
     }
 
     fn next_animation(&mut self, engine: &mut Engine) {
@@ -168,6 +204,27 @@ impl Sandbox {
                 .animation_name(root, self.animation_index)
                 .unwrap_or("?")
         );
+    }
+
+    fn capture_model_once(&mut self, engine: &mut Engine) {
+        if self.captured {
+            return;
+        }
+        let (Some(directory), Some(path)) = (&self.capture_each, self.models.get(self.model_index))
+        else {
+            return;
+        };
+        let name = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("model");
+        let target = directory.join(format!("{name}.png"));
+        self.captured = true;
+        if let Some(target) = target.to_str()
+            && let Err(error) = engine.save_screenshot(target)
+        {
+            log::error!("screenshot failed: {error}");
+        }
     }
 
     fn animate(&mut self, engine: &mut Engine) {
@@ -192,6 +249,39 @@ impl Sandbox {
 
         if let Some(mut transform) = world.get_mut::<Transform>(self.sun) {
             *transform = Transform::looking_at(sun_direction * 30.0, Vec3::ZERO, Vec3::Y);
+        }
+    }
+}
+
+fn collect_models() -> Vec<PathBuf> {
+    let mut models = Vec::new();
+    if let Ok(directory) = std::env::var("FLUX_MODEL_DIR") {
+        collect_directory(Path::new(&directory), &mut models);
+        models.sort();
+    } else if let Ok(path) = std::env::var("FLUX_MODEL") {
+        let path = PathBuf::from(path);
+        if path.is_dir() {
+            collect_directory(&path, &mut models);
+            models.sort();
+        } else {
+            models.push(path);
+        }
+    }
+    models
+}
+
+fn collect_directory(directory: &Path, models: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        log::error!("cannot read model directory {}", directory.display());
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "glb" || extension == "gltf")
+        {
+            models.push(path);
         }
     }
 }
