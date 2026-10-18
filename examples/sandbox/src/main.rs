@@ -9,11 +9,12 @@ use engine::{
 };
 use physics::CharacterController;
 
-const MODE_KEYS: [(KeyCode, Mode); 4] = [
+const MODE_KEYS: [(KeyCode, Mode); 5] = [
     (KeyCode::Digit1, Mode::Physics),
     (KeyCode::Digit2, Mode::Models),
     (KeyCode::Digit3, Mode::Cloth),
     (KeyCode::Digit4, Mode::Stress),
+    (KeyCode::Digit5, Mode::Character),
 ];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -22,6 +23,7 @@ enum Mode {
     Models,
     Cloth,
     Stress,
+    Character,
 }
 
 impl Mode {
@@ -31,6 +33,7 @@ impl Mode {
             "models" => Some(Self::Models),
             "cloth" => Some(Self::Cloth),
             "stress" => Some(Self::Stress),
+            "character" => Some(Self::Character),
             _ => None,
         }
     }
@@ -41,6 +44,7 @@ impl Mode {
             Self::Models => "models",
             Self::Cloth => "cloth",
             Self::Stress => "stress",
+            Self::Character => "character",
         }
     }
 
@@ -50,6 +54,9 @@ impl Mode {
             Self::Models => "left/right switch model, N animation, R reload",
             Self::Cloth => "wind simulation",
             Self::Stress => "instanced scene, frame rate in log",
+            Self::Character => {
+                "WASD move, shift run, right mouse orbit, space jump, V camera, T toon, N motion"
+            }
         }
     }
 }
@@ -58,6 +65,21 @@ struct ClothDemo {
     mesh: u32,
     simulation: Cloth,
     obstacle: Vec3,
+}
+
+struct CharacterDemo {
+    root: Entity,
+    player: CharacterController,
+    yaw: f32,
+    pitch: f32,
+    facing: f32,
+    third_person: bool,
+    motions: Vec<PathBuf>,
+    motion_index: usize,
+    idle_motion: Option<usize>,
+    walk_motion: Option<usize>,
+    run_motion: Option<usize>,
+    free_motion: bool,
 }
 
 struct Sandbox {
@@ -84,6 +106,7 @@ struct Sandbox {
     stress_count: u32,
     stress_seconds: f64,
     stress_start: Option<Instant>,
+    character: Option<CharacterDemo>,
 }
 
 impl App for Sandbox {
@@ -137,6 +160,7 @@ impl App for Sandbox {
             stress_count,
             stress_seconds: 0.0,
             stress_start: None,
+            character: None,
         };
         sandbox.switch_mode(engine, mode);
         sandbox
@@ -167,6 +191,7 @@ impl App for Sandbox {
             Mode::Models => self.update_models(engine, input),
             Mode::Cloth => self.update_cloth(engine, time.delta),
             Mode::Stress => self.track_stress(),
+            Mode::Character => self.update_character(engine, input, time.delta),
         }
         self.capture_once(engine);
 
@@ -197,6 +222,7 @@ impl Sandbox {
         engine.reset_scene();
         self.mode = mode;
         self.cloth = None;
+        self.character = None;
         self.model_root = None;
         self.animation_count = 0;
         self.animation_index = 0;
@@ -217,10 +243,11 @@ impl Sandbox {
             }
             Mode::Cloth => self.cloth = Some(setup_cloth_scene(engine)),
             Mode::Stress => setup_stress(engine, self.stress_count),
+            Mode::Character => self.enter_character(engine),
         }
 
         engine.set_title(&format!(
-            "Flux | {} | 1-4 modes | {} | F12 screenshot",
+            "Flux | {} | 1-5 modes | {} | F12 screenshot",
             mode.label(),
             mode.hint()
         ));
@@ -233,6 +260,195 @@ impl Sandbox {
             Mode::Physics => self.switch_mode(engine, Mode::Physics),
             Mode::Cloth => self.switch_mode(engine, Mode::Cloth),
             Mode::Stress => self.switch_mode(engine, Mode::Stress),
+            Mode::Character => self.switch_mode(engine, Mode::Character),
+        }
+    }
+
+    fn enter_character(&mut self, engine: &mut Engine) {
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let Some(model) = character_model_path(manifest) else {
+            log::error!("character model not found");
+            return;
+        };
+        let root = match engine.spawn_model(&model) {
+            Ok(root) => root,
+            Err(error) => {
+                log::error!("character model loading failed: {error}");
+                return;
+            }
+        };
+        let motions = motion_paths(manifest);
+        for motion in &motions {
+            match engine.add_animation(root, motion) {
+                Ok(index) => log::info!(
+                    "motion {index}: {}",
+                    engine.animation_name(root, index).unwrap_or("?")
+                ),
+                Err(error) => log::warn!("cannot load motion {}: {error}", motion.display()),
+            }
+        }
+        let motion_count = engine.animation_count(root);
+        if motion_count > 0 {
+            engine.play_animation(root, 0);
+        }
+        let find_motion = |needle: &str| {
+            motions.iter().position(|path| {
+                path.file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .is_some_and(|name| name.to_lowercase().contains(needle))
+            })
+        };
+        let idle_motion = find_motion("idle").or(if motions.is_empty() { None } else { Some(0) });
+        let walk_motion = find_motion("walk");
+        let run_motion = find_motion("run");
+        let toon = std::env::var("FLUX_TOON")
+            .map(|value| value != "0")
+            .unwrap_or(true);
+        {
+            let settings = &mut engine.scene_mut().render_mut().settings;
+            settings.toon = toon;
+            if toon {
+                settings.bloom = 0.02;
+                settings.exposure = 0.9;
+            }
+        }
+        engine.frame_model(root);
+        let player = CharacterController::new(Vec3::new(0.0, 0.05, 0.0), 0.35, 1.8);
+        self.character = Some(CharacterDemo {
+            root,
+            player,
+            yaw: 0.0,
+            pitch: 0.12,
+            facing: std::f32::consts::PI,
+            third_person: true,
+            motions,
+            motion_index: idle_motion.unwrap_or(0),
+            idle_motion,
+            walk_motion,
+            run_motion,
+            free_motion: false,
+        });
+        log::info!("character: {} with {motion_count} motions", model.display());
+    }
+
+    fn update_character(&mut self, engine: &mut Engine, input: &Input, dt: f32) {
+        let Some(state) = &mut self.character else {
+            return;
+        };
+        if input.mouse_held(MouseButton::Right) {
+            let motion = input.raw_motion();
+            state.yaw -= motion.x * 0.0022;
+            state.pitch = (state.pitch - motion.y * 0.0022).clamp(-0.85, 0.85);
+        }
+        if input.key_pressed(KeyCode::KeyV) {
+            state.third_person = !state.third_person;
+            log::info!(
+                "camera: {}",
+                if state.third_person {
+                    "third person"
+                } else {
+                    "first person"
+                }
+            );
+        }
+        if input.key_pressed(KeyCode::KeyT) {
+            let settings = &mut engine.scene_mut().render_mut().settings;
+            settings.toon = !settings.toon;
+            log::info!("toon shading: {}", settings.toon);
+        }
+        if input.key_pressed(KeyCode::KeyN) && !state.motions.is_empty() {
+            state.motion_index = (state.motion_index + 1) % state.motions.len();
+            state.free_motion = true;
+            engine.play_animation(state.root, state.motion_index);
+            log::info!(
+                "motion: {}",
+                engine
+                    .animation_name(state.root, state.motion_index)
+                    .unwrap_or("?")
+            );
+        }
+        let yaw = state.yaw;
+        let forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
+        let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+        let mut wish = Vec3::ZERO;
+        if input.key_held(KeyCode::KeyW) {
+            wish += forward;
+        }
+        if input.key_held(KeyCode::KeyS) {
+            wish -= forward;
+        }
+        if input.key_held(KeyCode::KeyD) {
+            wish += right;
+        }
+        if input.key_held(KeyCode::KeyA) {
+            wish -= right;
+        }
+        if self.auto_walk && wish.length_squared() < 1e-4 {
+            wish = forward;
+        }
+        let moving = wish.length_squared() > 1e-4;
+        let speed = if input.key_held(KeyCode::ShiftLeft) {
+            4.2
+        } else {
+            1.8
+        };
+        let jump = if input.key_pressed(KeyCode::Space) {
+            7.5
+        } else {
+            0.0
+        };
+        let excluded = engine.scene().subtree(state.root);
+        let colliders = engine.scene().collision_boxes_except(&excluded);
+        state.player.update(&colliders, 0.0, wish, speed, jump, dt);
+        if moving {
+            let target = yaw + std::f32::consts::PI;
+            state.facing = rotate_towards(state.facing, target, 10.0 * dt);
+        }
+        let position = state.player.position;
+        let facing = state.facing;
+        if let Some(mut transform) = engine
+            .scene_mut()
+            .world_mut()
+            .get_mut::<Transform>(state.root)
+        {
+            transform.translation = position;
+            transform.rotation = Quat::from_rotation_y(facing);
+        }
+        let running = input.key_held(KeyCode::ShiftLeft) || input.key_held(KeyCode::ShiftRight);
+        if moving {
+            state.free_motion = false;
+        }
+        if !state.free_motion {
+            let desired = if moving {
+                if running {
+                    state.run_motion.or(state.walk_motion)
+                } else {
+                    state.walk_motion
+                }
+            } else {
+                state.idle_motion
+            };
+            if let Some(desired) = desired
+                && desired != state.motion_index
+            {
+                engine.play_animation(state.root, desired);
+                state.motion_index = desired;
+            }
+        }
+        let target = position + Vec3::Y * 1.35;
+        if state.third_person {
+            let pitch = state.pitch;
+            let forward = Vec3::new(
+                -yaw.sin() * pitch.cos(),
+                pitch.sin(),
+                -yaw.cos() * pitch.cos(),
+            );
+            let camera = target - forward * 3.4;
+            let camera = Vec3::new(camera.x, camera.y.max(0.35), camera.z);
+            let (camera_yaw, camera_pitch) = looking_at(camera, target);
+            engine.set_camera_pose(camera, camera_yaw, camera_pitch);
+        } else {
+            engine.set_camera_pose(state.player.eye(), state.yaw, state.pitch);
         }
     }
 
@@ -421,6 +637,81 @@ impl Sandbox {
                 .unwrap_or("?")
         );
     }
+}
+
+fn character_model_path(manifest: &Path) -> Option<PathBuf> {
+    let config = manifest.join("assets/character.txt");
+    if let Ok(text) = std::fs::read_to_string(&config) {
+        let relative = text.trim();
+        if !relative.is_empty() {
+            let path = manifest.join("assets").join(relative);
+            if path.exists() {
+                return Some(path);
+            }
+            log::warn!("configured character model missing: {}", path.display());
+        }
+    }
+    let mut candidates = Vec::new();
+    scan_model_files(&manifest.join("assets/models"), &mut candidates, 3);
+    candidates
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|extension| extension == "pmx"))
+        .max_by_key(|path| path.metadata().map(|meta| meta.len()).unwrap_or(0))
+}
+
+fn motion_paths(manifest: &Path) -> Vec<PathBuf> {
+    let mut motions = Vec::new();
+    match std::env::var("FLUX_MOTIONS_DIR") {
+        Ok(directory) => scan_motion_files(&PathBuf::from(directory), &mut motions, 4),
+        Err(_) => {
+            scan_motion_files(&manifest.join("assets/animations"), &mut motions, 2);
+            scan_motion_files(&manifest.join("assets/motions"), &mut motions, 4);
+        }
+    }
+    motions.sort();
+    motions
+}
+
+fn scan_model_files(directory: &Path, files: &mut Vec<PathBuf>, depth: usize) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_model_files(&path, files, depth - 1);
+        } else if path.extension().is_some_and(|extension| {
+            matches!(extension.to_str(), Some("pmx" | "pmd" | "glb" | "gltf"))
+        }) {
+            files.push(path);
+        }
+    }
+}
+
+fn scan_motion_files(directory: &Path, files: &mut Vec<PathBuf>, depth: usize) {
+    if depth == 0 {
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            scan_motion_files(&path, files, depth - 1);
+        } else if path.extension().is_some_and(|extension| extension == "vmd") {
+            files.push(path);
+        }
+    }
+}
+
+fn rotate_towards(current: f32, target: f32, max_step: f32) -> f32 {
+    let difference = (target - current + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
+        - std::f32::consts::PI;
+    current + difference.clamp(-max_step, max_step)
 }
 
 fn collect_models() -> Vec<PathBuf> {
