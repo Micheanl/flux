@@ -32,7 +32,7 @@ fn vs_main(input: VertexInput) -> VertexOutput {
     let instance = instances[input.instance_index];
     let world = instance.model * vec4<f32>(input.position, 1.0);
     var output: VertexOutput;
-    output.clip = frame.view_proj * world;
+    output.clip = frame.view_proj * instance.model * vec4<f32>(input.position, 1.0);
     output.world_pos = world.xyz;
     output.normal = normalize((instance.model * vec4<f32>(input.normal, 0.0)).xyz);
     output.tangent = vec4<f32>(

@@ -4,7 +4,6 @@ use wgpu::{Features, TextureFormat};
 pub struct RendererConfig {
     pub shadow_map_size: u32,
     pub cascade_count: u32,
-    pub shadow_distance: f32,
     pub max_instances: u32,
     pub texture_size: u32,
     pub texture_layers: u32,
@@ -18,7 +17,6 @@ impl Default for RendererConfig {
         Self {
             shadow_map_size: 2048,
             cascade_count: 4,
-            shadow_distance: 120.0,
             max_instances: 65_536,
             texture_size: 512,
             texture_layers: 16,

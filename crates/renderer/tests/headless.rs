@@ -1,4 +1,4 @@
-use foundation::{Camera, Mat4, Transform, Vec3, Vec4};
+use foundation::{Camera, Mat4, Quat, Transform, Vec3, Vec4};
 use graphics::{Gpu, GpuConfig};
 use renderer::{
     CameraData, InstanceData, MaterialData, RenderScene, Renderer, RendererConfig, checker_texture,
@@ -112,5 +112,105 @@ fn headless_render_produces_image() {
     println!(
         "GPU: {} | instances {} | draws {} | gpu culling {}",
         gpu.info.name, stats.instances, stats.draw_calls, stats.gpu_driven
+    );
+}
+
+fn grazing_scene() -> RenderScene {
+    let mut scene = RenderScene::default();
+    let checker = scene.add_texture(checker_texture(
+        128,
+        16,
+        [220, 220, 220, 255],
+        [70, 70, 70, 255],
+    ));
+    let ground_mesh = scene.add_mesh(plane(80.0, 16));
+    let ground = scene.add_material(
+        MaterialData::pbr(Vec4::splat(1.0), 0.0, 0.9)
+            .with_textures(checker, 1, 2, 3)
+            .with_uv_scale([12.0, 12.0], [0.0, 0.0]),
+    );
+    let ground_bounds = scene.meshes[ground_mesh as usize].bounds;
+    scene.instances.push(InstanceData::new(
+        Mat4::IDENTITY,
+        &ground_bounds,
+        ground_mesh,
+        ground,
+    ));
+
+    let cube_mesh = scene.add_mesh(cube(1.0));
+    let cube_bounds = scene.meshes[cube_mesh as usize].bounds;
+    let stone = scene.add_material(MaterialData::pbr(Vec4::new(0.8, 0.3, 0.2, 1.0), 0.0, 0.5));
+    let steel = scene.add_material(MaterialData::pbr(Vec4::new(0.9, 0.9, 0.95, 1.0), 1.0, 0.2));
+    for z in 0..6 {
+        for x in 0..6 {
+            let height = 0.6 + ((x * 7 + z * 13) % 5) as f32 * 0.4;
+            let model = Transform {
+                translation: Vec3::new(x as f32 * 2.0 - 5.0, height * 0.5, z as f32 * 2.0 - 5.0),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::new(0.6, height, 0.6),
+            }
+            .matrix();
+            scene.instances.push(InstanceData::new(
+                model,
+                &cube_bounds,
+                cube_mesh,
+                if (x + z) % 2 == 0 { stone } else { steel },
+            ));
+        }
+    }
+
+    let time = 0.6f32;
+    let angle = time * 0.06;
+    let position = Vec3::new(angle.cos() * 22.0, 6.0, angle.sin() * 22.0);
+    let camera = Camera::perspective(
+        &Transform::looking_at(position, Vec3::ZERO, Vec3::Y),
+        60f32.to_radians(),
+        800.0 / 450.0,
+        0.1,
+    );
+    scene.camera = CameraData::from_camera(&camera);
+    let sun_angle = time * 0.05;
+    scene.sun.direction = Vec3::new(sun_angle.cos() * 0.5, 0.8, sun_angle.sin() * 0.5).normalize();
+    scene.settings.exposure = 0.85;
+    scene.settings.bloom = 0.06;
+    scene.settings.shadow_distance = 40.0;
+    scene
+}
+
+#[test]
+fn grazing_ground_has_no_depth_holes() {
+    let _ = env_logger::builder().is_test(true).try_init();
+    let gpu = match Gpu::new(&GpuConfig {
+        features: RendererConfig::required_features(),
+        ..Default::default()
+    }) {
+        Ok(gpu) => gpu,
+        Err(err) => {
+            eprintln!("no GPU available, skipping test: {err}");
+            return;
+        }
+    };
+
+    let mut renderer = Renderer::new(
+        &gpu,
+        RendererConfig::default(),
+        TextureFormat::Rgba8UnormSrgb,
+    );
+    let (width, height) = (800u32, 450u32);
+    renderer.render_offscreen(&grazing_scene(), width, height);
+    let pixels = renderer
+        .read_offscreen()
+        .expect("failed to read back pixels");
+    let black = pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[0].max(pixel[1]).max(pixel[2]) < 16)
+        .count();
+    let ratio = black as f32 / (width * height) as f32;
+    assert!(
+        ratio < 0.01,
+        "depth prepass left {:.2}% black pixels",
+        ratio * 100.0
     );
 }

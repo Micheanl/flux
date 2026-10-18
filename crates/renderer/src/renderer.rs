@@ -262,11 +262,12 @@ impl Renderer {
             .len()
             .min(self.gpu_scene.instance_capacity as usize) as u32;
         let cascade_count = self.config.cascade_count.clamp(1, MAX_CASCADES as u32);
+        let shadow_distance = scene.settings.shadow_distance.max(1.0);
         self.cascades = cascades::compute(
             &camera,
             scene.sun.direction,
             cascade_count,
-            self.config.shadow_distance,
+            shadow_distance,
             self.config.shadow_map_size,
         );
 
@@ -318,7 +319,7 @@ impl Renderer {
             params: foundation::Vec4::new(
                 camera.near,
                 cascade_count as f32,
-                self.config.shadow_distance,
+                shadow_distance,
                 scene
                     .point_lights
                     .len()
