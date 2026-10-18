@@ -135,3 +135,21 @@ fn loads_sandbox_demo_models() {
         assert!(!model.meshes.is_empty(), "{}", path.display());
     }
 }
+
+#[test]
+fn loads_mmd_model() {
+    let model = assets::load_mmd(&fixture("robot.pmx"), Some(&fixture("robot.vmd")))
+        .expect("MMD loading failed");
+    assert_eq!(model.meshes.len(), 2);
+    assert_eq!(model.materials.len(), 2);
+    assert_eq!(model.skins.len(), 1);
+    assert_eq!(model.skins[0].joints.len(), 7);
+    assert_eq!(model.animations.len(), 1);
+    let clip = &model.animations[0];
+    assert!(clip.duration > 1.9);
+    assert!(clip.tracks.len() >= 5);
+    let pose = clip.sample(0.5);
+    let arm = pose.iter().find(|pose| pose.node == 3).expect("arm track");
+    assert!(arm.rotation.is_some());
+    assert!(model.roots.len() >= 2);
+}
