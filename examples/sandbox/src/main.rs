@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use engine::{
     App, DirectionalLight, Engine, EngineConfig, Entity, Flow, FrameTime, Input, KeyCode,
@@ -27,6 +28,9 @@ struct Sandbox {
     player_yaw: f32,
     player_pitch: f32,
     auto_walk: bool,
+    stress: Option<u32>,
+    stress_seconds: f64,
+    bench_start: Option<Instant>,
 }
 
 impl App for Sandbox {
@@ -42,6 +46,9 @@ impl App for Sandbox {
             .unwrap_or(u64::MAX);
         let auto_cycle = std::env::var("FLUX_MODEL_AUTO").is_ok_and(|value| value == "1");
         let auto_walk = std::env::var("FLUX_PLAYER_AUTO").is_ok_and(|value| value == "1");
+        let stress = std::env::var("FLUX_STRESS")
+            .ok()
+            .and_then(|value| value.parse().ok());
         let models = collect_models();
 
         let checker = engine.scene_mut().add_texture(checker_texture(
@@ -76,7 +83,7 @@ impl App for Sandbox {
         settings.shadow_distance = 70.0;
         settings.ambient = 0.18;
 
-        let player_mode = models.is_empty() || auto_walk;
+        let player_mode = stress.is_none() && (models.is_empty() || auto_walk);
         let mut sandbox = Self {
             spinners: Vec::new(),
             sun,
@@ -97,9 +104,14 @@ impl App for Sandbox {
             player_yaw: 0.0,
             player_pitch: -0.06,
             auto_walk,
+            stress,
+            stress_seconds: 0.0,
+            bench_start: stress.map(|_| Instant::now()),
         };
 
-        if sandbox.models.is_empty() {
+        if let Some(count) = stress {
+            setup_stress(engine, count);
+        } else if sandbox.models.is_empty() {
             setup_showcase(engine, &mut sandbox.spinners);
             engine.set_camera_pose(
                 sandbox.player.eye(),
@@ -143,11 +155,22 @@ impl App for Sandbox {
         }
 
         self.frame += 1;
+        self.track_stress(time.delta);
         if self.auto_cycle && !self.models.is_empty() && self.frame.is_multiple_of(40) {
             self.step_model(engine, 1);
         }
         self.capture_model_once(engine);
         if self.frame >= self.frame_limit {
+            if let Some(count) = self.stress {
+                let elapsed = self
+                    .bench_start
+                    .map_or(0.0, |start| start.elapsed().as_secs_f64());
+                log::info!(
+                    "stress {count}: {} frames in {elapsed:.2}s ({:.1} fps)",
+                    self.frame,
+                    self.frame as f64 / elapsed.max(1e-6)
+                );
+            }
             if let Some(path) = self.capture.clone()
                 && let Err(error) = engine.save_screenshot(&path)
             {
@@ -255,6 +278,18 @@ impl Sandbox {
         }
     }
 
+    fn track_stress(&mut self, delta: f32) {
+        let Some(count) = self.stress else {
+            return;
+        };
+        self.stress_seconds += f64::from(delta);
+        if self.frame.is_multiple_of(120) {
+            let fps = 120.0 / self.stress_seconds.max(1e-6);
+            log::info!("stress {count}: {fps:.1} fps");
+            self.stress_seconds = 0.0;
+        }
+    }
+
     fn update_player(&mut self, engine: &mut Engine, input: &Input, dt: f32) {
         if input.mouse_held(MouseButton::Right) {
             let motion = input.raw_motion();
@@ -359,6 +394,45 @@ fn collect_directory(directory: &Path, models: &mut Vec<PathBuf>) {
             models.push(path);
         }
     }
+}
+
+fn setup_stress(engine: &mut Engine, count: u32) {
+    let cube_mesh = engine.scene_mut().add_mesh(cube(1.0));
+    let material = engine.scene_mut().add_material(MaterialData::pbr(
+        Vec4::new(0.8, 0.3, 0.22, 1.0),
+        0.15,
+        0.45,
+    ));
+    let side = (count as f64).sqrt().ceil() as u32;
+    let spacing = 2.2;
+    let half = (side as f32 - 1.0) * 0.5;
+    let scene = engine.scene_mut();
+    for index in 0..count {
+        let x = (index % side) as f32;
+        let z = (index / side) as f32;
+        let height = 0.4 + (index.wrapping_mul(2_654_435_761) % 97) as f32 / 97.0 * 2.4;
+        scene.spawn_mesh(
+            cube_mesh,
+            material,
+            Transform {
+                translation: Vec3::new((x - half) * spacing, height * 0.5, (z - half) * spacing),
+                rotation: Quat::IDENTITY,
+                scale: Vec3::new(0.75, height, 0.75),
+            },
+        );
+    }
+    let extent = side as f32 * spacing * 0.5;
+    let position = Vec3::new(extent * 0.15, extent * 0.4, extent * 1.5);
+    let (yaw, pitch) = looking_at(position, Vec3::new(0.0, 0.0, 0.0));
+    engine.set_camera_pose(position, yaw, pitch);
+    log::info!("stress scene: {count} instances, grid {side}x{side}, extent {extent:.0}");
+}
+
+fn looking_at(position: Vec3, target: Vec3) -> (f32, f32) {
+    let direction = (target - position).normalize();
+    let yaw = (-direction.x).atan2(-direction.z);
+    let pitch = direction.y.asin();
+    (yaw, pitch)
 }
 
 fn setup_showcase(engine: &mut Engine, spinners: &mut Vec<(Entity, f32)>) {
@@ -480,6 +554,13 @@ fn setup_showcase(engine: &mut Engine, spinners: &mut Vec<(Entity, f32)>) {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    engine::run::<Sandbox>(EngineConfig::default())?;
+    let mut config = EngineConfig::default();
+    if let Some(count) = std::env::var("FLUX_STRESS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+    {
+        config.renderer.max_instances = count.max(config.renderer.max_instances);
+    }
+    engine::run::<Sandbox>(config)?;
     Ok(())
 }
