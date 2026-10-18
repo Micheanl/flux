@@ -1597,6 +1597,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
+name = "physics"
+version = "0.1.0"
+dependencies = [
+ "foundation",
+]
+
+[[package]]
 name = "pin-project"
 version = "1.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1921,6 +1928,7 @@ dependencies = [
  "engine",
  "env_logger",
  "log",
+ "physics",
 ]
 
 [[package]]
@@ -1929,6 +1937,7 @@ version = "0.1.0"
 dependencies = [
  "ecs",
  "foundation",
+ "physics",
  "renderer",
 ]
 

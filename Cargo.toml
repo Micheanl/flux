@@ -15,6 +15,7 @@ simd = { path = "crates/simd" }
 platform = { path = "crates/platform" }
 graphics = { path = "crates/graphics" }
 renderer = { path = "crates/renderer" }
+physics = { path = "crates/physics" }
 scene = { path = "crates/scene" }
 assets = { path = "crates/assets" }
 engine = { path = "crates/engine" }

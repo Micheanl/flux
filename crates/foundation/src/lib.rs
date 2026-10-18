@@ -13,6 +13,6 @@ pub use time::{FrameClock, FrameTime};
 pub use transform::Transform;
 
 pub use glam::{
-    EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A, Vec4, Vec4Swizzles, mat3, mat4, quat, vec2,
-    vec3, vec4,
+    EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec3A, Vec3Swizzles, Vec4, Vec4Swizzles, mat3, mat4,
+    quat, vec2, vec3, vec4,
 };
