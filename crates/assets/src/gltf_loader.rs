@@ -1,26 +1,34 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use foundation::{Aabb, Mat4, Transform, Vec3, Vec4};
+use foundation::{Aabb, Mat4, Quat, Transform, Vec3, Vec4};
 use renderer::{
     DEFAULT_TEXTURE_LAYERS, MaterialData, MeshData, TEXTURE_BLACK, TEXTURE_DEFAULT_MR,
     TEXTURE_FLAT_NORMAL, TEXTURE_WHITE, TextureData, Vertex,
 };
 
+use crate::animation::{AnimationClip, AnimationTrack, Interpolation, TrackValues};
 use crate::error::AssetError;
 
 pub struct LoadedModel {
+    pub nodes: Vec<ModelNode>,
+    pub roots: Vec<usize>,
     pub meshes: Vec<MeshData>,
     pub materials: Vec<MaterialData>,
     pub textures: Vec<TextureData>,
-    pub instances: Vec<ModelInstance>,
+    pub animations: Vec<AnimationClip>,
 }
 
-pub struct ModelInstance {
+pub struct ModelNode {
     pub name: String,
+    pub parent: Option<usize>,
+    pub transform: Transform,
+    pub primitives: Vec<ModelPrimitive>,
+}
+
+pub struct ModelPrimitive {
     pub mesh: u32,
     pub material: u32,
-    pub transform: Transform,
 }
 
 pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
@@ -48,68 +56,149 @@ pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
         .map(|material| convert_material(&material, &texture_layers))
         .collect();
 
-    let mut meshes = Vec::new();
-    let mut instances = Vec::new();
-    let scene = document
-        .default_scene()
-        .or_else(|| document.scenes().next());
-
-    if let Some(scene) = scene {
-        for node in scene.nodes() {
-            visit_node(&node, Mat4::IDENTITY, &buffers, &mut meshes, &mut instances);
-        }
-    } else {
-        for node in document.nodes() {
-            visit_node(&node, Mat4::IDENTITY, &buffers, &mut meshes, &mut instances);
-        }
-    }
-
-    Ok(LoadedModel {
-        meshes,
-        materials,
-        textures,
-        instances,
-    })
-}
-
-fn visit_node(
-    node: &gltf::Node<'_>,
-    parent: Mat4,
-    buffers: &[gltf::buffer::Data],
-    meshes: &mut Vec<MeshData>,
-    instances: &mut Vec<ModelInstance>,
-) {
-    let local = Mat4::from_cols_array_2d(&node.transform().matrix());
-    let world = parent * local;
-    let name = node.name().unwrap_or("node").to_string();
-    let (scale, rotation, translation) = world.to_scale_rotation_translation();
-
-    if let Some(mesh) = node.mesh() {
-        for primitive in mesh.primitives() {
-            if primitive.mode() != gltf::mesh::Mode::Triangles {
-                log::warn!("skipping non-triangle primitive: {:?}", primitive.mode());
-                continue;
-            }
-            let Some(mesh_data) = read_primitive(&primitive, buffers) else {
-                continue;
-            };
-            instances.push(ModelInstance {
-                name: name.clone(),
-                mesh: meshes.len() as u32,
-                material: primitive.material().index().unwrap_or(0) as u32,
+    let mut nodes: Vec<ModelNode> = document
+        .nodes()
+        .map(|node| {
+            let (scale, rotation, translation) =
+                Mat4::from_cols_array_2d(&node.transform().matrix())
+                    .to_scale_rotation_translation();
+            ModelNode {
+                name: node.name().unwrap_or("node").to_string(),
+                parent: None,
                 transform: Transform {
                     translation,
                     rotation,
                     scale,
                 },
+                primitives: Vec::new(),
+            }
+        })
+        .collect();
+
+    let mut meshes = Vec::new();
+    for node in document.nodes() {
+        let Some(mesh) = node.mesh() else {
+            continue;
+        };
+        for primitive in mesh.primitives() {
+            if primitive.mode() != gltf::mesh::Mode::Triangles {
+                log::warn!("skipping non-triangle primitive: {:?}", primitive.mode());
+                continue;
+            }
+            let Some(mesh_data) = read_primitive(&primitive, &buffers) else {
+                continue;
+            };
+            nodes[node.index()].primitives.push(ModelPrimitive {
+                mesh: meshes.len() as u32,
+                material: primitive.material().index().unwrap_or(0) as u32,
             });
             meshes.push(mesh_data);
         }
     }
 
-    for child in node.children() {
-        visit_node(&child, world, buffers, meshes, instances);
+    let scene = document
+        .default_scene()
+        .or_else(|| document.scenes().next());
+    let scene_nodes: Vec<gltf::Node<'_>> = scene
+        .as_ref()
+        .map(|scene| scene.nodes().collect())
+        .unwrap_or_default();
+    let roots: Vec<usize> = scene_nodes.iter().map(|node| node.index()).collect();
+    for root in &scene_nodes {
+        assign_parents(root, &mut nodes);
     }
+
+    let animations = load_animations(&document, &buffers);
+
+    Ok(LoadedModel {
+        nodes,
+        roots,
+        meshes,
+        materials,
+        textures,
+        animations,
+    })
+}
+
+fn normalize_quat(value: [f32; 4]) -> Quat {
+    let rotation = Quat::from_array(value);
+    if rotation.length_squared() > 1e-8 {
+        rotation.normalize()
+    } else {
+        Quat::IDENTITY
+    }
+}
+
+fn assign_parents(node: &gltf::Node<'_>, nodes: &mut [ModelNode]) {
+    for child in node.children() {
+        nodes[child.index()].parent = Some(node.index());
+        assign_parents(&child, nodes);
+    }
+}
+
+fn load_animations(
+    document: &gltf::Document,
+    buffers: &[gltf::buffer::Data],
+) -> Vec<AnimationClip> {
+    document
+        .animations()
+        .map(|animation| {
+            let mut tracks = Vec::new();
+            for channel in animation.channels() {
+                let interpolation = match channel.sampler().interpolation() {
+                    gltf::animation::Interpolation::Linear => Interpolation::Linear,
+                    gltf::animation::Interpolation::Step => Interpolation::Step,
+                    gltf::animation::Interpolation::CubicSpline => {
+                        log::warn!("skipping cubic spline animation channel");
+                        continue;
+                    }
+                };
+                let reader = channel.reader(|buffer| Some(&buffers[buffer.index()].0));
+                let Some(inputs) = reader.read_inputs() else {
+                    continue;
+                };
+                let times: Vec<f32> = inputs.collect();
+                let Some(outputs) = reader.read_outputs() else {
+                    continue;
+                };
+                let values = match outputs {
+                    gltf::animation::util::ReadOutputs::Translations(samples) => {
+                        TrackValues::Translations(samples.map(Vec3::from_array).collect())
+                    }
+                    gltf::animation::util::ReadOutputs::Rotations(samples) => {
+                        TrackValues::Rotations(samples.into_f32().map(normalize_quat).collect())
+                    }
+                    gltf::animation::util::ReadOutputs::Scales(samples) => {
+                        TrackValues::Scales(samples.map(Vec3::from_array).collect())
+                    }
+                    gltf::animation::util::ReadOutputs::MorphTargetWeights(_) => continue,
+                };
+                let sample_count = match &values {
+                    TrackValues::Translations(samples) => samples.len(),
+                    TrackValues::Rotations(samples) => samples.len(),
+                    TrackValues::Scales(samples) => samples.len(),
+                };
+                if times.len() < 2 || times.len() != sample_count {
+                    continue;
+                }
+                tracks.push(AnimationTrack {
+                    node: channel.target().node().index(),
+                    interpolation,
+                    times,
+                    values,
+                });
+            }
+            let duration = tracks
+                .iter()
+                .filter_map(|track| track.times.last().copied())
+                .fold(0.0f32, f32::max);
+            AnimationClip {
+                name: animation.name().unwrap_or("animation").to_string(),
+                duration,
+                tracks,
+            }
+        })
+        .collect()
 }
 
 fn read_primitive(
