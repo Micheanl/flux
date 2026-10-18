@@ -1,0 +1,9 @@
+/target
+**/*.rs.bk
+*.pdb
+/.zig-cache
+/zig-out
+/zig-cache
+.DS_Store
+/screenshot*.png
+/*.png

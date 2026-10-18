@@ -1,0 +1,44 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "examples/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+foundation = { path = "crates/foundation" }
+ecs = { path = "crates/ecs" }
+simd = { path = "crates/simd" }
+platform = { path = "crates/platform" }
+graphics = { path = "crates/graphics" }
+renderer = { path = "crates/renderer" }
+scene = { path = "crates/scene" }
+assets = { path = "crates/assets" }
+engine = { path = "crates/engine" }
+
+bytemuck = { version = "1.25", features = ["derive"] }
+env_logger = "0.11"
+glam = { version = "0.34", features = ["bytemuck"] }
+gltf = { version = "1.4", features = ["extras", "names", "utils"] }
+hecs = "0.11"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+log = "0.4"
+pollster = "1.0"
+raw-window-handle = "0.6"
+web-time = "1.1"
+wgpu = "30.0"
+winit = "0.30"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
