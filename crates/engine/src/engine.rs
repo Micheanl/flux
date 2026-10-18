@@ -247,6 +247,27 @@ impl Engine {
                     Transform::default(),
                 );
                 self.scene.set_parent(entity, node_entity);
+                let Some(skin) = primitive
+                    .skin
+                    .and_then(|skin| model.skins.get(skin as usize))
+                else {
+                    continue;
+                };
+                let joints: Vec<scene::Entity> = skin
+                    .joints
+                    .iter()
+                    .filter_map(|joint| node_entities.get(*joint).copied().flatten())
+                    .collect();
+                if joints.len() != skin.joints.len() {
+                    continue;
+                }
+                let _ = self.scene.world_mut().insert(
+                    entity,
+                    scene::Skin {
+                        joints,
+                        inverse_bind_matrices: skin.inverse_bind_matrices.clone(),
+                    },
+                );
             }
         }
 
