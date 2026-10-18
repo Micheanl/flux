@@ -31,6 +31,37 @@ impl Obb {
         }
     }
 
+    pub fn ray_intersection(&self, origin: Vec3, direction: Vec3) -> Option<f32> {
+        let inverse = self.rotation.inverse();
+        let local_origin = inverse * (origin - self.center);
+        let local_direction = inverse * direction;
+        let mut t_min = 0.0f32;
+        let mut t_max = f32::INFINITY;
+        for axis in 0..3 {
+            let offset = local_origin[axis];
+            let axis_direction = local_direction[axis];
+            let extent = self.half_extents[axis];
+            if axis_direction.abs() < 1e-6 {
+                if offset.abs() > extent {
+                    return None;
+                }
+                continue;
+            }
+            let inverse_direction = 1.0 / axis_direction;
+            let mut near = (-extent - offset) * inverse_direction;
+            let mut far = (extent - offset) * inverse_direction;
+            if near > far {
+                std::mem::swap(&mut near, &mut far);
+            }
+            t_min = t_min.max(near);
+            t_max = t_max.min(far);
+            if t_min > t_max {
+                return None;
+            }
+        }
+        Some(t_min)
+    }
+
     pub fn contains(&self, point: Vec3) -> bool {
         self.local_point(point).abs().cmpge(self.half_extents).all()
     }
