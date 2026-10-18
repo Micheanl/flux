@@ -9,3 +9,4 @@ license.workspace = true
 ecs.workspace = true
 foundation.workspace = true
 renderer.workspace = true
+physics.workspace = true

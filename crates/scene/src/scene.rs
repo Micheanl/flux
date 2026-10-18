@@ -129,6 +129,27 @@ impl Scene {
         }
     }
 
+    pub fn collision_boxes(&self) -> Vec<physics::Obb> {
+        let render = &self.render;
+        let mut boxes = Vec::new();
+        for (mesh_renderer, global) in self
+            .world
+            .query::<(&MeshRenderer, &GlobalTransform)>()
+            .iter()
+        {
+            let Some(mesh) = render.meshes.get(mesh_renderer.mesh as usize) else {
+                continue;
+            };
+            let obb = physics::Obb::from_matrix(&global.0, &mesh.bounds);
+            let extents = obb.half_extents;
+            if extents.x > 40.0 || extents.z > 40.0 || extents.y < 0.05 {
+                continue;
+            }
+            boxes.push(obb);
+        }
+        boxes
+    }
+
     pub fn extract(&mut self, aspect: f32) -> &RenderScene {
         self.update_hierarchy();
         self.extract_camera(aspect);
