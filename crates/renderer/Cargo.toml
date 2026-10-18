@@ -1,0 +1,18 @@
+[package]
+name = "renderer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+image.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+foundation.workspace = true
+graphics.workspace = true
+log.workspace = true
+simd.workspace = true
+wgpu.workspace = true
