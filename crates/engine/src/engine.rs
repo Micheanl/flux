@@ -203,7 +203,19 @@ impl Engine {
         path: impl AsRef<std::path::Path>,
     ) -> Result<scene::Entity, assets::AssetError> {
         let path = path.as_ref();
-        let model = assets::load_gltf(path)?;
+        let model = match path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default()
+        {
+            "pmx" => assets::load_mmd(path, None)?,
+            "pmd" => {
+                return Err(assets::AssetError::Unsupported(
+                    "PMD models are not supported yet".to_string(),
+                ));
+            }
+            _ => assets::load_gltf(path)?,
+        };
         let bounds = model_bounds(&model);
         let texture_offset = self.scene.render().textures.len() as u32;
         let material_offset = self.scene.render().materials.len() as u32;
@@ -438,6 +450,7 @@ impl Engine {
         }
         let center = bounds.center();
         let radius = bounds.extents().length().max(0.5);
+        self.scene.render_mut().settings.shadow_distance = (radius * 8.0).clamp(4.0, 70.0);
         let direction = Vec3::new(0.65, 0.45, 0.85).normalize();
         let distance = radius / (30f32.to_radians()).sin() * 1.2;
         let pitch = (-direction.y).asin();
