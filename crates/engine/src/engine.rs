@@ -16,6 +16,14 @@ struct Stats {
     instances: u32,
 }
 
+struct MorphMesh {
+    node: usize,
+    mesh: u32,
+    base: MeshData,
+    targets: Vec<assets::MorphTarget>,
+    weights: Vec<f32>,
+}
+
 struct ModelRuntime {
     root: scene::Entity,
     nodes: Vec<Option<scene::Entity>>,
@@ -25,6 +33,7 @@ struct ModelRuntime {
     time: f32,
     speed: f32,
     looping: bool,
+    morphs: Vec<MorphMesh>,
 }
 
 pub struct Engine {
@@ -267,6 +276,7 @@ impl Engine {
                 .unwrap_or(root);
             self.scene.set_parent(entity, parent);
         }
+        let mut morphs = Vec::new();
         for (index, node) in model.nodes.iter().enumerate() {
             let Some(Some(node_entity)) = node_entities.get(index).copied() else {
                 continue;
@@ -279,6 +289,17 @@ impl Engine {
                     Transform::default(),
                 );
                 self.scene.set_parent(entity, node_entity);
+                if let Some(morph) = &primitive.morph
+                    && let Some(base) = model.meshes.get(primitive.mesh as usize)
+                {
+                    morphs.push(MorphMesh {
+                        node: index,
+                        mesh,
+                        base: base.clone(),
+                        targets: morph.targets.clone(),
+                        weights: morph.weights.clone(),
+                    });
+                }
                 let Some(skin) = primitive
                     .skin
                     .and_then(|skin| model.skins.get(skin as usize))
@@ -303,6 +324,19 @@ impl Engine {
             }
         }
 
+        let mut pending_meshes = Vec::new();
+        for morph in &morphs {
+            if morph.weights.iter().any(|weight| weight.abs() > 1e-5) {
+                pending_meshes.push((
+                    morph.mesh,
+                    morphed_mesh(&morph.base, &morph.targets, &morph.weights),
+                ));
+            }
+        }
+        for (mesh, data) in pending_meshes {
+            self.update_mesh(mesh, data);
+        }
+
         let animations = model.animations;
         if !animations.is_empty() {
             self.models.push(ModelRuntime {
@@ -314,6 +348,7 @@ impl Engine {
                 time: 0.0,
                 speed: 1.0,
                 looping: true,
+                morphs,
             });
         }
 
@@ -397,6 +432,7 @@ impl Engine {
 
     pub fn advance_animations(&mut self, dt: f32) {
         let mut updates: Vec<(scene::Entity, Transform)> = Vec::new();
+        let mut morph_updates: Vec<(u32, MeshData)> = Vec::new();
         for runtime in &mut self.models {
             let Some(index) = runtime.current else {
                 continue;
@@ -430,7 +466,34 @@ impl Engine {
                     transform.scale = scale;
                 }
                 updates.push((entity, transform));
+                if let Some(weights) = &pose.weights {
+                    for morph in runtime
+                        .morphs
+                        .iter_mut()
+                        .filter(|morph| morph.node == pose.node)
+                    {
+                        if morph.weights.len() != weights.len() {
+                            continue;
+                        }
+                        let changed = morph
+                            .weights
+                            .iter()
+                            .zip(weights)
+                            .any(|(old, new)| (old - new).abs() > 1e-5);
+                        if !changed {
+                            continue;
+                        }
+                        morph.weights.copy_from_slice(weights);
+                        morph_updates.push((
+                            morph.mesh,
+                            morphed_mesh(&morph.base, &morph.targets, &morph.weights),
+                        ));
+                    }
+                }
             }
+        }
+        for (mesh, data) in morph_updates {
+            self.update_mesh(mesh, data);
         }
         for (entity, transform) in updates {
             if let Some(mut slot) = self.scene.world_mut().get_mut::<Transform>(entity) {
@@ -512,4 +575,35 @@ fn node_world(
     };
     worlds[index] = Some(world);
     Some(world)
+}
+
+fn morphed_mesh(base: &MeshData, targets: &[assets::MorphTarget], weights: &[f32]) -> MeshData {
+    let mut data = base.clone();
+    for (target, weight) in targets.iter().zip(weights) {
+        if weight.abs() < 1e-6 {
+            continue;
+        }
+        let count = data.vertices.len().min(target.positions.len());
+        for index in 0..count {
+            let delta = target.positions[index];
+            data.vertices[index].position[0] += delta[0] * weight;
+            data.vertices[index].position[1] += delta[1] * weight;
+            data.vertices[index].position[2] += delta[2] * weight;
+            if let Some(normal) = target.normals.get(index) {
+                data.vertices[index].normal[0] += normal[0] * weight;
+                data.vertices[index].normal[1] += normal[1] * weight;
+                data.vertices[index].normal[2] += normal[2] * weight;
+            }
+        }
+    }
+    for vertex in &mut data.vertices {
+        let normal = Vec3::from_array(vertex.normal);
+        vertex.normal = normal.normalize_or_zero().to_array();
+    }
+    data.bounds = Aabb::from_points(
+        data.vertices
+            .iter()
+            .map(|vertex| Vec3::from_array(vertex.position)),
+    );
+    data
 }
