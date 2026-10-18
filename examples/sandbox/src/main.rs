@@ -453,7 +453,7 @@ fn collect_directory(directory: &Path, models: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path
             .extension()
-            .is_some_and(|extension| extension == "glb" || extension == "gltf")
+            .is_some_and(|extension| matches!(extension.to_str(), Some("glb" | "gltf" | "pmx")))
         {
             models.push(path);
         }
