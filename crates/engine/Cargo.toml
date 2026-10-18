@@ -1,0 +1,16 @@
+[package]
+name = "engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+assets.workspace = true
+image.workspace = true
+foundation.workspace = true
+graphics.workspace = true
+log.workspace = true
+platform.workspace = true
+renderer.workspace = true
+scene.workspace = true
