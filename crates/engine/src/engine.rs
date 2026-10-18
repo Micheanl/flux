@@ -89,6 +89,23 @@ impl Engine {
         })
     }
 
+    pub fn set_title(&self, title: &str) {
+        self.window.set_title(title);
+    }
+
+    pub fn reset_scene(&mut self) {
+        self.scene = Scene::new();
+        self.camera = FlyCamera::default();
+        self.camera_entity =
+            self.scene
+                .spawn_camera(self.camera.transform(), 60f32.to_radians(), 0.1);
+        self.scene.set_name(self.camera_entity, "main camera");
+        self.scene.set_active_camera(self.camera_entity);
+        self.models.clear();
+        self.model_bounds.clear();
+        self.dirty_meshes.clear();
+    }
+
     pub fn scene(&self) -> &Scene {
         &self.scene
     }
@@ -337,6 +354,40 @@ impl Engine {
             self.update_mesh(mesh, data);
         }
 
+        for light in &model.lights {
+            let Some(Some(node_entity)) = node_entities.get(light.node).copied() else {
+                continue;
+            };
+            let entity = match &light.kind {
+                assets::LightKind::Directional { color, intensity } => self.scene.spawn_sun(
+                    Transform::default(),
+                    scene::DirectionalLight {
+                        color: *color,
+                        intensity: *intensity,
+                    },
+                ),
+                assets::LightKind::Point {
+                    color,
+                    intensity,
+                    range,
+                } => self.scene.spawn_point_light(
+                    Transform::default(),
+                    scene::PointLight::new(*color, *intensity, *range),
+                ),
+                assets::LightKind::Spot {
+                    color,
+                    intensity,
+                    range,
+                    ..
+                } => self.scene.spawn_point_light(
+                    Transform::default(),
+                    scene::PointLight::new(*color, *intensity, *range),
+                ),
+            };
+            self.scene.set_parent(entity, node_entity);
+        }
+
+        let light_count = model.lights.len();
         let animations = model.animations;
         if !animations.is_empty() {
             self.models.push(ModelRuntime {
@@ -357,12 +408,13 @@ impl Engine {
         self.model_bounds.push((root, bounds));
 
         log::info!(
-            "loaded model {}: {} nodes, {} primitives, {} meshes, {} materials, {} animations",
+            "loaded model {}: {} nodes, {} primitives, {} meshes, {} materials, {} lights, {} animations",
             path.display(),
             node_count,
             primitive_count,
             mesh_count,
             material_count,
+            light_count,
             animation_names.len()
         );
         for name in &animation_names {
