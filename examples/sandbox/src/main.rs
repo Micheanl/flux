@@ -2,9 +2,10 @@ use std::path::{Path, PathBuf};
 
 use engine::{
     App, DirectionalLight, Engine, EngineConfig, Entity, Flow, FrameTime, Input, KeyCode,
-    MaterialData, PointLight, Quat, RenderSettings, Transform, Vec3, Vec4, checker_texture, cube,
-    plane, torus, uv_sphere,
+    MaterialData, MouseButton, PointLight, Quat, RenderSettings, Transform, Vec3, Vec4,
+    checker_texture, cube, plane, torus, uv_sphere,
 };
+use physics::CharacterController;
 
 struct Sandbox {
     spinners: Vec<(Entity, f32)>,
@@ -21,6 +22,11 @@ struct Sandbox {
     animation_count: usize,
     animation_index: usize,
     auto_cycle: bool,
+    player: CharacterController,
+    player_mode: bool,
+    player_yaw: f32,
+    player_pitch: f32,
+    auto_walk: bool,
 }
 
 impl App for Sandbox {
@@ -35,6 +41,7 @@ impl App for Sandbox {
             .and_then(|value| value.parse().ok())
             .unwrap_or(u64::MAX);
         let auto_cycle = std::env::var("FLUX_MODEL_AUTO").is_ok_and(|value| value == "1");
+        let auto_walk = std::env::var("FLUX_PLAYER_AUTO").is_ok_and(|value| value == "1");
         let models = collect_models();
 
         let checker = engine.scene_mut().add_texture(checker_texture(
@@ -69,6 +76,7 @@ impl App for Sandbox {
         settings.shadow_distance = 70.0;
         settings.ambient = 0.18;
 
+        let player_mode = models.is_empty() || auto_walk;
         let mut sandbox = Self {
             spinners: Vec::new(),
             sun,
@@ -84,11 +92,20 @@ impl App for Sandbox {
             animation_count: 0,
             animation_index: 0,
             auto_cycle,
+            player: CharacterController::new(Vec3::new(0.0, 0.05, 18.0), 0.35, 1.8),
+            player_mode,
+            player_yaw: 0.0,
+            player_pitch: -0.06,
+            auto_walk,
         };
 
         if sandbox.models.is_empty() {
             setup_showcase(engine, &mut sandbox.spinners);
-            engine.set_camera_pose(Vec3::new(0.0, 6.0, 26.0), 0.0, -0.18);
+            engine.set_camera_pose(
+                sandbox.player.eye(),
+                sandbox.player_yaw,
+                sandbox.player_pitch,
+            );
         } else {
             sandbox.load_model(engine, 0);
         }
@@ -109,6 +126,14 @@ impl App for Sandbox {
         }
         if input.key_pressed(KeyCode::KeyN) {
             self.next_animation(engine);
+        }
+        if input.key_pressed(KeyCode::Tab) {
+            self.player_mode = !self.player_mode;
+            log::info!(
+                "camera mode: {}",
+                if self.player_mode { "player" } else { "fly" }
+            );
+            engine.set_camera_pose(self.player.eye(), self.player_yaw, self.player_pitch);
         }
         if input.key_pressed(KeyCode::ArrowRight) || input.key_pressed(KeyCode::PageDown) {
             self.step_model(engine, 1);
@@ -133,6 +158,9 @@ impl App for Sandbox {
 
         self.time += time.delta;
         self.animate(engine);
+        if self.player_mode {
+            self.update_player(engine, input, time.delta);
+        }
         Flow::Continue
     }
 }
@@ -225,6 +253,53 @@ impl Sandbox {
         {
             log::error!("screenshot failed: {error}");
         }
+    }
+
+    fn update_player(&mut self, engine: &mut Engine, input: &Input, dt: f32) {
+        if input.mouse_held(MouseButton::Right) {
+            let motion = input.raw_motion();
+            self.player_yaw -= motion.x * 0.0022;
+            self.player_pitch = (self.player_pitch - motion.y * 0.0022).clamp(-1.4, 1.4);
+        }
+        let yaw = self.player_yaw;
+        let forward = Vec3::new(-yaw.sin(), 0.0, -yaw.cos());
+        let right = Vec3::new(yaw.cos(), 0.0, -yaw.sin());
+        let mut wish = Vec3::ZERO;
+        if input.key_held(KeyCode::KeyW) {
+            wish += forward;
+        }
+        if input.key_held(KeyCode::KeyS) {
+            wish -= forward;
+        }
+        if input.key_held(KeyCode::KeyD) {
+            wish += right;
+        }
+        if input.key_held(KeyCode::KeyA) {
+            wish -= right;
+        }
+        if self.auto_walk {
+            wish += forward;
+        }
+        let speed = if input.key_held(KeyCode::ShiftLeft) {
+            9.0
+        } else {
+            5.0
+        };
+        let jump = if input.key_pressed(KeyCode::Space) {
+            7.5
+        } else {
+            0.0
+        };
+        let colliders = engine.scene().collision_boxes();
+        self.player.update(&colliders, 0.0, wish, speed, jump, dt);
+        if self.auto_walk && self.frame.is_multiple_of(30) {
+            log::info!(
+                "player position {:?} grounded {}",
+                self.player.position,
+                self.player.grounded
+            );
+        }
+        engine.set_camera_pose(self.player.eye(), self.player_yaw, self.player_pitch);
     }
 
     fn animate(&mut self, engine: &mut Engine) {
