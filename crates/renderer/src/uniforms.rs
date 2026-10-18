@@ -25,6 +25,13 @@ pub struct FrameUniform {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
+pub struct BloomUniform {
+    pub source_size: [f32; 2],
+    pub target_size: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct ViewUniform {
     pub view_proj: Mat4,
     pub planes: [Vec4; 6],

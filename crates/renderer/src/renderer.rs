@@ -102,7 +102,7 @@ impl Renderer {
             &draw_buffer,
             &count_buffer,
         );
-        let target_bindings = bindings::target_bindings(&device, &passes, &targets);
+        let target_bindings = bindings::target_bindings(&device, &queue, &passes, &targets);
 
         Self {
             device,
@@ -234,7 +234,7 @@ impl Renderer {
         );
         if targets_rebuilt {
             self.target_bindings =
-                bindings::target_bindings(&self.device, &self.passes, &self.targets);
+                bindings::target_bindings(&self.device, &self.queue, &self.passes, &self.targets);
         }
 
         if self.gpu_scene.revision != scene.revision {
@@ -471,11 +471,11 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
 
-        for mip in 0..self.targets.bloom.len() {
+        for (mip, target) in self.targets.bloom.iter().enumerate() {
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("bloom downsample"),
                 color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &self.targets.bloom[mip],
+                    view: &target.view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: Operations {
@@ -497,11 +497,12 @@ impl Renderer {
             pass.draw(0..3, 0..1);
         }
 
-        for mip in (1..self.targets.bloom.len()).rev() {
+        for (index, bind_group) in self.target_bindings.bloom_upsample.iter().rev().enumerate() {
+            let mip = self.targets.bloom.len() - 1 - index;
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("bloom upsample"),
                 color_attachments: &[Some(RenderPassColorAttachment {
-                    view: &self.targets.bloom[mip - 1],
+                    view: &self.targets.bloom[mip - 1].view,
                     resolve_target: None,
                     depth_slice: None,
                     ops: Operations {
@@ -515,11 +516,12 @@ impl Renderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&self.passes.upsample_pipeline);
-            pass.set_bind_group(0, &self.target_bindings.bloom_up[mip], &[]);
+            pass.set_bind_group(0, bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 
-        if let (Some(view), Some(tonemap)) = (output, &self.target_bindings.tonemap) {
+        if let Some(view) = output {
+            let tonemap = &self.target_bindings.tonemap;
             let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
                 label: Some("tonemap"),
                 color_attachments: &[Some(RenderPassColorAttachment {

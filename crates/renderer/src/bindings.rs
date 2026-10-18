@@ -1,12 +1,12 @@
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, Buffer,
-    BufferBinding, Device, TextureView,
+    BufferBinding, BufferDescriptor, BufferUsages, Device, Queue, TextureView,
 };
 
 use crate::gpu_scene::GpuScene;
 use crate::passes::Passes;
 use crate::targets::Targets;
-use crate::uniforms::{COUNT_STRIDE, VIEW_COUNT, VIEW_UNIFORM_STRIDE};
+use crate::uniforms::{BloomUniform, COUNT_STRIDE, VIEW_COUNT, VIEW_UNIFORM_STRIDE};
 
 pub struct SceneBindings {
     pub textures: BindGroup,
@@ -17,8 +17,8 @@ pub struct SceneBindings {
 
 pub struct TargetBindings {
     pub bloom_down: Vec<BindGroup>,
-    pub bloom_up: Vec<BindGroup>,
-    pub tonemap: Option<BindGroup>,
+    pub bloom_upsample: Vec<BindGroup>,
+    pub tonemap: BindGroup,
 }
 
 pub fn scene_bindings(
@@ -122,35 +122,75 @@ pub fn scene_bindings(
     }
 }
 
-pub fn target_bindings(device: &Device, passes: &Passes, targets: &Targets) -> TargetBindings {
-    let bloom_bind_group = |source: &TextureView| {
-        device.create_bind_group(&BindGroupDescriptor {
-            label: Some("bloom bindings"),
-            layout: &passes.bloom_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: BindingResource::TextureView(source),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: BindingResource::Sampler(&passes.linear_sampler),
-                },
-            ],
-        })
-    };
+pub fn target_bindings(
+    device: &Device,
+    queue: &Queue,
+    passes: &Passes,
+    targets: &Targets,
+) -> TargetBindings {
+    let bloom_bind_group =
+        |source: &TextureView, source_size: (u32, u32), target_size: (u32, u32)| -> BindGroup {
+            let uniform = BloomUniform {
+                source_size: [source_size.0 as f32, source_size.1 as f32],
+                target_size: [target_size.0 as f32, target_size.1 as f32],
+            };
+            let uniform_buffer = device.create_buffer(&BufferDescriptor {
+                label: Some("bloom size"),
+                size: std::mem::size_of::<BloomUniform>() as u64,
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&uniform));
 
-    let bloom_down = std::iter::once(bloom_bind_group(&targets.hdr_view))
-        .chain(
-            targets
-                .bloom
-                .iter()
-                .take(targets.bloom.len().saturating_sub(1))
-                .map(bloom_bind_group),
-        )
+            device.create_bind_group(&BindGroupDescriptor {
+                label: Some("bloom bindings"),
+                layout: &passes.bloom_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: BindingResource::TextureView(source),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: BindingResource::Sampler(&passes.linear_sampler),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                ],
+            })
+        };
+
+    let bloom_down = std::iter::once(bloom_bind_group(
+        &targets.hdr_view,
+        targets.size,
+        targets.bloom[0].size,
+    ))
+    .chain(
+        targets
+            .bloom
+            .iter()
+            .take(targets.bloom.len().saturating_sub(1))
+            .enumerate()
+            .map(|(index, source)| {
+                bloom_bind_group(&source.view, source.size, targets.bloom[index + 1].size)
+            }),
+    )
+    .collect();
+
+    let bloom_upsample = targets
+        .bloom
+        .iter()
+        .enumerate()
+        .skip(1)
+        .map(|(index, source)| {
+            bloom_bind_group(&source.view, source.size, targets.bloom[index - 1].size)
+        })
         .collect();
-    let bloom_up = targets.bloom.iter().map(bloom_bind_group).collect();
-    let tonemap = targets.bloom.first().map(|bloom| {
+
+    let tonemap = {
+        let bloom = &targets.bloom[0].view;
         device.create_bind_group(&BindGroupDescriptor {
             label: Some("tonemap bindings"),
             layout: &passes.tonemap_layout,
@@ -169,11 +209,11 @@ pub fn target_bindings(device: &Device, passes: &Passes, targets: &Targets) -> T
                 },
             ],
         })
-    });
+    };
 
     TargetBindings {
         bloom_down,
-        bloom_up,
+        bloom_upsample,
         tonemap,
     }
 }

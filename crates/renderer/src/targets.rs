@@ -5,13 +5,18 @@ use wgpu::{
 
 use crate::config::RendererConfig;
 
+pub struct BloomTarget {
+    pub view: TextureView,
+    pub size: (u32, u32),
+}
+
 pub struct Targets {
     pub size: (u32, u32),
     pub hdr: Texture,
     pub hdr_view: TextureView,
     pub depth: Texture,
     pub depth_view: TextureView,
-    pub bloom: Vec<TextureView>,
+    pub bloom: Vec<BloomTarget>,
     pub shadow_view: TextureView,
     pub shadow_layers: Vec<TextureView>,
     pub offscreen: Option<Texture>,
@@ -125,20 +130,24 @@ impl Targets {
             );
             self.depth_view = self.depth.create_view(&TextureViewDescriptor::default());
 
+            let mut bloom_size = ((size.0 / 2).max(1), (size.1 / 2).max(1));
             self.bloom = (0..config.bloom_mips.max(1))
-                .map(|mip| {
-                    let scale = 1u32 << (mip + 1);
-                    let mip_size = ((size.0 / scale).max(1), (size.1 / scale).max(1));
+                .map(|_| {
                     let texture = create_texture(
                         device,
                         "bloom",
-                        mip_size,
+                        bloom_size,
                         config.hdr_format,
                         TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
                         1,
                         1,
                     );
-                    texture.create_view(&TextureViewDescriptor::default())
+                    let target = BloomTarget {
+                        view: texture.create_view(&TextureViewDescriptor::default()),
+                        size: bloom_size,
+                    };
+                    bloom_size = ((bloom_size.0 / 2).max(1), (bloom_size.1 / 2).max(1));
+                    target
                 })
                 .collect();
         }

@@ -116,6 +116,16 @@ impl Passes {
                     TextureSampleType::Float { filterable: true },
                     TextureViewDimension::D2,
                 ),
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
                 sampler_entry(1, SamplerBindingType::Filtering),
             ],
         });
