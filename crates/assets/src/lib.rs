@@ -6,6 +6,7 @@ mod image_loader;
 pub use animation::{AnimationClip, AnimationTrack, Interpolation, NodePose, TrackValues};
 pub use error::AssetError;
 pub use gltf_loader::{
-    LoadedModel, ModelMorph, ModelNode, ModelPrimitive, ModelSkin, MorphTarget, load_gltf,
+    LightKind, LoadedModel, ModelLight, ModelMorph, ModelNode, ModelPrimitive, ModelSkin,
+    MorphTarget, load_gltf,
 };
 pub use image_loader::load_image;

@@ -10,6 +10,32 @@ use renderer::{
 use crate::animation::{AnimationClip, AnimationTrack, Interpolation, TrackValues};
 use crate::error::AssetError;
 
+#[derive(Clone, Debug)]
+pub struct ModelLight {
+    pub node: usize,
+    pub kind: LightKind,
+}
+
+#[derive(Clone, Debug)]
+pub enum LightKind {
+    Directional {
+        color: Vec3,
+        intensity: f32,
+    },
+    Point {
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+    },
+    Spot {
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+        inner_cone: f32,
+        outer_cone: f32,
+    },
+}
+
 pub struct LoadedModel {
     pub nodes: Vec<ModelNode>,
     pub roots: Vec<usize>,
@@ -17,6 +43,7 @@ pub struct LoadedModel {
     pub materials: Vec<MaterialData>,
     pub textures: Vec<TextureData>,
     pub skins: Vec<ModelSkin>,
+    pub lights: Vec<ModelLight>,
     pub animations: Vec<AnimationClip>,
 }
 
@@ -74,6 +101,40 @@ pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
     let materials = document
         .materials()
         .map(|material| convert_material(&material, &texture_layers))
+        .collect();
+
+    let lights: Vec<ModelLight> = document
+        .nodes()
+        .filter_map(|node| {
+            let light = node.light()?;
+            let color = Vec3::from_array(light.color());
+            let intensity = light.intensity();
+            let range = light.range();
+            let kind = match light.kind() {
+                gltf::khr_lights_punctual::Kind::Directional => {
+                    LightKind::Directional { color, intensity }
+                }
+                gltf::khr_lights_punctual::Kind::Point => LightKind::Point {
+                    color,
+                    intensity,
+                    range: range.unwrap_or(20.0),
+                },
+                gltf::khr_lights_punctual::Kind::Spot {
+                    inner_cone_angle,
+                    outer_cone_angle,
+                } => LightKind::Spot {
+                    color,
+                    intensity,
+                    range: range.unwrap_or(20.0),
+                    inner_cone: inner_cone_angle,
+                    outer_cone: outer_cone_angle,
+                },
+            };
+            Some(ModelLight {
+                node: node.index(),
+                kind,
+            })
+        })
         .collect();
 
     let skins: Vec<ModelSkin> = document
@@ -182,6 +243,7 @@ pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
         materials,
         textures,
         skins,
+        lights,
         animations,
     })
 }
