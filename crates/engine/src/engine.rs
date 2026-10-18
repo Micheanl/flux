@@ -90,6 +90,8 @@ impl Engine {
         self.camera.position = position;
         self.camera.yaw = yaw;
         self.camera.pitch = pitch;
+        self.scene
+            .set_camera_transform(self.camera_entity, self.camera.transform());
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -327,8 +329,6 @@ impl Engine {
         let pitch = (-direction.y).asin();
         let yaw = direction.x.atan2(direction.z);
         self.set_camera_pose(center + direction * distance, yaw, pitch);
-        self.scene
-            .set_camera_transform(self.camera_entity, self.camera.transform());
         true
     }
 
