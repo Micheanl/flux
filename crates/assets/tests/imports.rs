@@ -1,76 +1,22 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use assets::{load_gltf, load_image};
 
-fn temp_path(name: &str) -> PathBuf {
-    let mut path = std::env::temp_dir();
-    path.push(format!("flux_asset_test_{name}"));
+fn fixture(name: &str) -> PathBuf {
+    let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    path.push("tests/fixtures");
+    path.push(name);
     path
 }
 
-fn base64_encode(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut output = String::new();
-    for chunk in bytes.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let value = (b0 << 16) | (b1 << 8) | b2;
-        output.push(TABLE[((value >> 18) & 63) as usize] as char);
-        output.push(TABLE[((value >> 12) & 63) as usize] as char);
-        if chunk.len() > 1 {
-            output.push(TABLE[((value >> 6) & 63) as usize] as char);
-        } else {
-            output.push('=');
-        }
-        if chunk.len() > 2 {
-            output.push(TABLE[(value & 63) as usize] as char);
-        } else {
-            output.push('=');
-        }
-    }
-    output
+fn load(name: &str) -> assets::LoadedModel {
+    let path = fixture(name);
+    load_gltf(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()))
 }
 
 #[test]
 fn loads_minimal_gltf() {
-    let mut bytes = Vec::new();
-    for position in [[-1.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
-        for value in position {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-    for index in [0u16, 1, 2] {
-        bytes.extend_from_slice(&index.to_le_bytes());
-    }
-
-    let json = format!(
-        r#"{{
-  "asset": {{ "version": "2.0" }},
-  "scene": 0,
-  "scenes": [ {{ "nodes": [0] }} ],
-  "nodes": [ {{ "mesh": 0, "name": "Triangle", "translation": [0.0, 2.0, 0.0] }} ],
-  "meshes": [ {{ "primitives": [ {{ "attributes": {{ "POSITION": 0 }}, "indices": 1, "material": 0 }} ] }} ],
-  "materials": [ {{ "pbrMetallicRoughness": {{ "baseColorFactor": [1.0, 0.2, 0.1, 1.0] }} }} ],
-  "accessors": [
-    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
-       "min": [-1.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] }},
-    {{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }}
-  ],
-  "bufferViews": [
-    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
-    {{ "buffer": 0, "byteOffset": 36, "byteLength": 6 }}
-  ],
-  "buffers": [ {{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }} ]
-}}"#,
-        bytes.len(),
-        base64_encode(&bytes)
-    );
-
-    let path = temp_path("minimal.gltf");
-    std::fs::write(&path, json).unwrap();
-
-    let model = load_gltf(&path).expect("glTF loading failed");
+    let model = load("minimal.gltf");
     assert_eq!(model.meshes.len(), 1);
     assert_eq!(model.meshes[0].vertices.len(), 3);
     assert_eq!(model.meshes[0].indices, vec![0, 1, 2]);
@@ -83,90 +29,20 @@ fn loads_minimal_gltf() {
     assert!((model.materials[0].base_color.x - 1.0).abs() < 1e-5);
     assert!((model.materials[0].base_color.y - 0.2).abs() < 1e-5);
     assert!((model.materials[0].emissive_metallic.w - 1.0).abs() < 1e-5);
-
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn loads_png_image() {
-    let path = temp_path("image.png");
-    let image = image::RgbaImage::from_raw(
-        2,
-        2,
-        vec![
-            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 0, 255,
-        ],
-    )
-    .unwrap();
-    image.save(&path).unwrap();
-
-    let texture = load_image(&path).expect("image loading failed");
+    let texture = load_image(&fixture("image.png")).expect("image loading failed");
     assert_eq!(texture.width, 2);
     assert_eq!(texture.height, 2);
     assert_eq!(texture.rgba.len(), 16);
     assert_eq!(&texture.rgba[0..4], &[255, 0, 0, 255]);
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn loads_animation_tracks() {
-    let mut bytes = Vec::new();
-    for position in [[-1.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
-        for value in position {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-    for index in [0u16, 1, 2] {
-        bytes.extend_from_slice(&index.to_le_bytes());
-    }
-    for time in [0.0f32, 1.0] {
-        bytes.extend_from_slice(&time.to_le_bytes());
-    }
-    for translation in [[0.0f32, 0.0, 0.0], [0.0, 3.0, 0.0]] {
-        for value in translation {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-
-    let json = format!(
-        r#"{{
-  "asset": {{ "version": "2.0" }},
-  "scene": 0,
-  "scenes": [ {{ "nodes": [0] }} ],
-  "nodes": [ {{ "mesh": 0, "name": "Triangle" }} ],
-  "meshes": [ {{ "primitives": [ {{ "attributes": {{ "POSITION": 0 }}, "indices": 1, "material": 0 }} ] }} ],
-  "materials": [ {{ "pbrMetallicRoughness": {{ "baseColorFactor": [1.0, 1.0, 1.0, 1.0] }} }} ],
-  "animations": [
-    {{
-      "name": "bob",
-      "channels": [ {{ "sampler": 0, "target": {{ "node": 0, "path": "translation" }} }} ],
-      "samplers": [ {{ "input": 2, "output": 3, "interpolation": "LINEAR" }} ]
-    }}
-  ],
-  "accessors": [
-    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
-       "min": [-1.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] }},
-    {{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }},
-    {{ "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR",
-       "min": [0.0], "max": [1.0] }},
-    {{ "bufferView": 3, "componentType": 5126, "count": 2, "type": "VEC3" }}
-  ],
-  "bufferViews": [
-    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
-    {{ "buffer": 0, "byteOffset": 36, "byteLength": 6 }},
-    {{ "buffer": 0, "byteOffset": 42, "byteLength": 8 }},
-    {{ "buffer": 0, "byteOffset": 50, "byteLength": 24 }}
-  ],
-  "buffers": [ {{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }} ]
-}}"#,
-        bytes.len(),
-        base64_encode(&bytes)
-    );
-
-    let path = temp_path("animated.gltf");
-    std::fs::write(&path, json).unwrap();
-
-    let model = load_gltf(&path).expect("glTF loading failed");
+    let model = load("animated.gltf");
     assert_eq!(model.animations.len(), 1);
     let clip = &model.animations[0];
     assert_eq!(clip.name, "bob");
@@ -176,78 +52,11 @@ fn loads_animation_tracks() {
     assert_eq!(poses.len(), 1);
     let translation = poses[0].translation.expect("missing translation");
     assert!((translation - foundation::Vec3::new(0.0, 1.5, 0.0)).length() < 1e-5);
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn loads_skinned_primitive() {
-    let mut bytes = Vec::new();
-    for position in [[-1.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
-        for value in position {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-    for index in [0u16, 1, 2] {
-        bytes.extend_from_slice(&index.to_le_bytes());
-    }
-    for joints in [[0u16, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] {
-        for value in joints {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-    for weights in [
-        [1.0f32, 0.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0, 0.0],
-        [1.0, 0.0, 0.0, 0.0],
-    ] {
-        for value in weights {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-    for matrix in [[
-        1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
-    ]] {
-        for value in matrix {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-
-    let json = format!(
-        r#"{{
-  "asset": {{ "version": "2.0" }},
-  "scene": 0,
-  "scenes": [ {{ "nodes": [0, 1] }} ],
-  "nodes": [
-    {{ "name": "bone" }},
-    {{ "name": "skinned", "mesh": 0, "skin": 0 }}
-  ],
-  "meshes": [ {{ "primitives": [ {{ "attributes": {{ "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3 }}, "indices": 1, "material": 0 }} ] }} ],
-  "materials": [ {{ "pbrMetallicRoughness": {{ "baseColorFactor": [1.0, 0.5, 0.2, 1.0] }} }} ],
-  "skins": [ {{ "joints": [0], "inverseBindMatrices": 4 }} ],
-  "accessors": [
-    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
-       "min": [-1.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] }},
-    {{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }},
-    {{ "bufferView": 2, "componentType": 5123, "count": 3, "type": "VEC4" }},
-    {{ "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4" }},
-    {{ "bufferView": 4, "componentType": 5126, "count": 1, "type": "MAT4" }}
-  ],
-  "bufferViews": [
-    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
-    {{ "buffer": 0, "byteOffset": 36, "byteLength": 6 }},
-    {{ "buffer": 0, "byteOffset": 42, "byteLength": 24 }},
-    {{ "buffer": 0, "byteOffset": 66, "byteLength": 48 }},
-    {{ "buffer": 0, "byteOffset": 114, "byteLength": 64 }}
-  ],
-  "buffers": [ {{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }} ]
-}}"#,
-        bytes.len(),
-        base64_encode(&bytes)
-    );
-
-    let path = temp_path("skinned.gltf");
-    std::fs::write(&path, json).unwrap();
-    let model = load_gltf(&path).expect("glTF loading failed");
+    let model = load("skinned.gltf");
     assert_eq!(model.skins.len(), 1);
     assert_eq!(model.skins[0].joints, vec![0]);
     assert_eq!(model.skins[0].inverse_bind_matrices.len(), 1);
@@ -255,60 +64,11 @@ fn loads_skinned_primitive() {
     assert_eq!(model.nodes[1].primitives[0].skin, Some(0));
     assert_eq!(model.meshes[0].vertices[0].joints, [0; 4]);
     assert_eq!(model.meshes[0].vertices[0].weights, [1.0, 0.0, 0.0, 0.0]);
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn loads_material_extensions() {
-    let mut bytes = Vec::new();
-    for position in [[-1.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
-        for value in position {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-    for index in [0u16, 1, 2] {
-        bytes.extend_from_slice(&index.to_le_bytes());
-    }
-
-    let json = format!(
-        r#"{{
-  "asset": {{ "version": "2.0" }},
-  "extensionsUsed": ["KHR_materials_unlit", "KHR_materials_emissive_strength"],
-  "scene": 0,
-  "scenes": [ {{ "nodes": [0] }} ],
-  "nodes": [ {{ "mesh": 0 }} ],
-  "meshes": [ {{ "primitives": [ {{ "attributes": {{ "POSITION": 0 }}, "indices": 1, "material": 0 }} ] }} ],
-  "materials": [
-    {{
-      "alphaMode": "MASK",
-      "alphaCutoff": 0.3,
-      "doubleSided": true,
-      "emissiveFactor": [1.0, 0.5, 0.25],
-      "extensions": {{
-        "KHR_materials_unlit": {{}},
-        "KHR_materials_emissive_strength": {{ "emissiveStrength": 2.0 }}
-      }},
-      "pbrMetallicRoughness": {{ "metallicFactor": 0.4, "roughnessFactor": 0.6 }}
-    }}
-  ],
-  "accessors": [
-    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
-       "min": [-1.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] }},
-    {{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }}
-  ],
-  "bufferViews": [
-    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
-    {{ "buffer": 0, "byteOffset": 36, "byteLength": 6 }}
-  ],
-  "buffers": [ {{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }} ]
-}}"#,
-        bytes.len(),
-        base64_encode(&bytes)
-    );
-
-    let path = temp_path("materials.gltf");
-    std::fs::write(&path, json).unwrap();
-    let model = load_gltf(&path).expect("glTF loading failed");
+    let model = load("materials.gltf");
     let material = model.materials[0];
     assert!((material.flags.x - 1.0).abs() < 1e-5);
     assert!((material.flags.y - 1.0).abs() < 1e-5);
@@ -317,71 +77,11 @@ fn loads_material_extensions() {
     assert!((material.emissive_metallic.x - 2.0).abs() < 1e-5);
     assert!((material.emissive_metallic.y - 1.0).abs() < 1e-5);
     assert!((material.emissive_metallic.z - 0.5).abs() < 1e-5);
-    let _ = std::fs::remove_file(path);
 }
 
 #[test]
 fn loads_morph_targets_and_weights() {
-    let mut bytes = Vec::new();
-    for position in [[-1.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
-        for value in position {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-    for delta in [[0.0f32, 0.5, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]] {
-        for value in delta {
-            bytes.extend_from_slice(&value.to_le_bytes());
-        }
-    }
-    for time in [0.0f32, 1.0] {
-        bytes.extend_from_slice(&time.to_le_bytes());
-    }
-    for weight in [0.0f32, 1.0] {
-        bytes.extend_from_slice(&weight.to_le_bytes());
-    }
-
-    let json = format!(
-        r#"{{
-  "asset": {{ "version": "2.0" }},
-  "scene": 0,
-  "scenes": [ {{ "nodes": [0] }} ],
-  "nodes": [ {{ "mesh": 0 }} ],
-  "meshes": [ {{
-    "weights": [0.5],
-    "primitives": [ {{
-      "attributes": {{ "POSITION": 0 }},
-      "targets": [ {{ "POSITION": 1 }} ],
-      "material": 0
-    }} ]
-  }} ],
-  "materials": [ {{ "pbrMetallicRoughness": {{ "baseColorFactor": [1.0, 0.4, 0.4, 1.0] }} }} ],
-  "animations": [ {{
-    "name": "morph",
-    "channels": [ {{ "sampler": 0, "target": {{ "node": 0, "path": "weights" }} }} ],
-    "samplers": [ {{ "input": 2, "output": 3, "interpolation": "LINEAR" }} ]
-  }} ],
-  "accessors": [
-    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
-       "min": [-1.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] }},
-    {{ "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3" }},
-    {{ "bufferView": 2, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0.0], "max": [1.0] }},
-    {{ "bufferView": 3, "componentType": 5126, "count": 2, "type": "SCALAR" }}
-  ],
-  "bufferViews": [
-    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
-    {{ "buffer": 0, "byteOffset": 36, "byteLength": 36 }},
-    {{ "buffer": 0, "byteOffset": 72, "byteLength": 8 }},
-    {{ "buffer": 0, "byteOffset": 80, "byteLength": 8 }}
-  ],
-  "buffers": [ {{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }} ]
-}}"#,
-        bytes.len(),
-        base64_encode(&bytes)
-    );
-
-    let path = temp_path("morph.gltf");
-    std::fs::write(&path, json).unwrap();
-    let model = load_gltf(&path).expect("glTF loading failed");
+    let model = load("morph.gltf");
     let morph = model.nodes[0].primitives[0]
         .morph
         .as_ref()
@@ -393,5 +93,45 @@ fn loads_morph_targets_and_weights() {
     let pose = model.animations[0].sample(0.5);
     let weights = pose[0].weights.as_ref().expect("sampled weights");
     assert!((weights[0] - 0.5).abs() < 1e-5);
-    let _ = std::fs::remove_file(path);
+}
+
+#[test]
+fn loads_punctual_lights() {
+    let model = load("lights.gltf");
+    assert_eq!(model.lights.len(), 2);
+    for light in &model.lights {
+        assert!(matches!(light.kind, assets::LightKind::Point { .. }));
+    }
+    let assets::LightKind::Point {
+        color,
+        intensity,
+        range,
+    } = model.lights[0].kind
+    else {
+        unreachable!()
+    };
+    assert!((intensity - 20.0).abs() < 1e-5);
+    assert!((range - 14.0).abs() < 1e-5);
+    assert!((color.x - 1.0).abs() < 1e-5);
+}
+
+#[test]
+fn loads_sandbox_demo_models() {
+    let directory =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sandbox/assets/models");
+    let mut models: Vec<PathBuf> = std::fs::read_dir(&directory)
+        .unwrap_or_else(|error| panic!("{}: {error}", directory.display()))
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "gltf")
+        })
+        .collect();
+    models.sort();
+    assert_eq!(models.len(), 4);
+    for path in models {
+        let model = load_gltf(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        assert!(!model.meshes.is_empty(), "{}", path.display());
+    }
 }
