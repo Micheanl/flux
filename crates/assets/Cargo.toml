@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+encoding_rs.workspace = true
 foundation.workspace = true
 gltf.workspace = true
 image.workspace = true

@@ -19,6 +19,12 @@ impl std::fmt::Display for AssetError {
 
 impl std::error::Error for AssetError {}
 
+impl AssetError {
+    pub(crate) fn invalid(message: &str) -> Self {
+        AssetError::Unsupported(message.to_string())
+    }
+}
+
 impl From<gltf::Error> for AssetError {
     fn from(error: gltf::Error) -> Self {
         AssetError::Gltf(error)
