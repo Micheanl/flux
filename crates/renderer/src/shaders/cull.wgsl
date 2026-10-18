@@ -1,6 +1,7 @@
 @group(0) @binding(0) var<uniform> view: ViewUniform;
 @group(1) @binding(0) var<storage, read> instances: array<Instance>;
 @group(1) @binding(1) var<storage, read> meshes: array<Mesh>;
+@group(1) @binding(2) var<storage, read> materials: array<Material>;
 @group(2) @binding(0) var<storage, read_write> draw_commands: array<DrawArgs>;
 @group(2) @binding(1) var<storage, read_write> visible_count: atomic<u32>;
 
@@ -25,6 +26,11 @@ fn cull_main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     let instance = instances[index];
+    let blend = materials[instance.material].flags.z > 1.5;
+    let transparent_view = view.counts.y != 0u;
+    if (transparent_view != blend) {
+        return;
+    }
     if (!aabb_visible(instance.bounds_min.xyz, instance.bounds_max.xyz)) {
         return;
     }

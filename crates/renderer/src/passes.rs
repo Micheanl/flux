@@ -7,11 +7,16 @@ use crate::mesh::Vertex;
 use crate::shaders;
 use crate::uniforms::VIEW_UNIFORM_STRIDE;
 
-const DEPTH_ATTRIBUTES: [VertexAttribute; 3] = [
+const DEPTH_ATTRIBUTES: [VertexAttribute; 4] = [
     VertexAttribute {
         format: VertexFormat::Float32x3,
         offset: 0,
         shader_location: 0,
+    },
+    VertexAttribute {
+        format: VertexFormat::Float32x2,
+        offset: std::mem::offset_of!(Vertex, uv) as u64,
+        shader_location: 2,
     },
     VertexAttribute {
         format: VertexFormat::Uint16x4,
@@ -35,6 +40,7 @@ pub struct Passes {
     pub frame_layout: BindGroupLayout,
     pub view_layout: BindGroupLayout,
     pub textures_layout: BindGroupLayout,
+    pub depth_textures_layout: BindGroupLayout,
     pub storage_layout: BindGroupLayout,
     pub cull_input_layout: BindGroupLayout,
     pub cull_output_layout: BindGroupLayout,
@@ -43,6 +49,7 @@ pub struct Passes {
     pub skin_layout: BindGroupLayout,
 
     pub mesh_pipeline: RenderPipeline,
+    pub blend_pipeline: RenderPipeline,
     pub depth_pipeline: RenderPipeline,
     pub shadow_pipeline: RenderPipeline,
     pub sky_pipeline: RenderPipeline,
@@ -96,6 +103,23 @@ impl Passes {
             ],
         });
 
+        let depth_textures_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("depth textures"),
+            entries: &[
+                texture_entry(
+                    0,
+                    TextureSampleType::Float { filterable: true },
+                    TextureViewDimension::D2Array,
+                ),
+                BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
         let storage_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("instances and materials"),
             entries: &[
@@ -110,6 +134,7 @@ impl Passes {
             entries: &[
                 storage_entry(0, ShaderStages::COMPUTE, true),
                 storage_entry(1, ShaderStages::COMPUTE, true),
+                storage_entry(2, ShaderStages::COMPUTE, true),
             ],
         });
 
@@ -182,14 +207,15 @@ impl Passes {
                 &skin_layout,
             ],
         );
-        let empty_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("empty group"),
-            entries: &[],
-        });
         let depth_pipeline_layout = pipeline_layout(
             device,
             "depth layout",
-            &[&view_layout, &empty_layout, &storage_layout, &skin_layout],
+            &[
+                &view_layout,
+                &depth_textures_layout,
+                &storage_layout,
+                &skin_layout,
+            ],
         );
         let sky_pipeline_layout = pipeline_layout(device, "sky layout", &[&frame_layout]);
         let cull_pipeline_layout = pipeline_layout(
@@ -210,7 +236,10 @@ impl Passes {
                 compilation_options: Default::default(),
                 buffers: &[Some(Vertex::LAYOUT)],
             },
-            primitive: default_primitive(),
+            primitive: PrimitiveState {
+                cull_mode: None,
+                ..default_primitive()
+            },
             depth_stencil: Some(depth_state(
                 CompareFunction::Equal,
                 false,
@@ -231,6 +260,39 @@ impl Passes {
             cache: None,
         });
 
+        let blend_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("transparent pbr"),
+            layout: Some(&mesh_pipeline_layout),
+            vertex: VertexState {
+                module: &mesh_module,
+                entry_point: Some("vs_main"),
+                compilation_options: Default::default(),
+                buffers: &[Some(Vertex::LAYOUT)],
+            },
+            primitive: PrimitiveState {
+                cull_mode: None,
+                ..default_primitive()
+            },
+            depth_stencil: Some(depth_state(
+                CompareFunction::GreaterEqual,
+                false,
+                DepthBiasState::default(),
+            )),
+            multisample: MultisampleState::default(),
+            fragment: Some(FragmentState {
+                module: &mesh_module,
+                entry_point: Some("fs_main"),
+                compilation_options: Default::default(),
+                targets: &[Some(ColorTargetState {
+                    format: config.hdr_format,
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+            }),
+            multiview_mask: None,
+            cache: None,
+        });
+
         let depth_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("depth prepass"),
             layout: Some(&depth_pipeline_layout),
@@ -240,14 +302,22 @@ impl Passes {
                 compilation_options: Default::default(),
                 buffers: &[Some(DEPTH_LAYOUT)],
             },
-            primitive: default_primitive(),
+            primitive: PrimitiveState {
+                cull_mode: None,
+                ..default_primitive()
+            },
             depth_stencil: Some(depth_state(
                 CompareFunction::GreaterEqual,
                 true,
                 DepthBiasState::default(),
             )),
             multisample: MultisampleState::default(),
-            fragment: None,
+            fragment: Some(FragmentState {
+                module: &depth_module,
+                entry_point: Some("fs_depth"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
             multiview_mask: None,
             cache: None,
         });
@@ -261,7 +331,10 @@ impl Passes {
                 compilation_options: Default::default(),
                 buffers: &[Some(DEPTH_LAYOUT)],
             },
-            primitive: default_primitive(),
+            primitive: PrimitiveState {
+                cull_mode: None,
+                ..default_primitive()
+            },
             depth_stencil: Some(depth_state(
                 CompareFunction::GreaterEqual,
                 true,
@@ -272,7 +345,12 @@ impl Passes {
                 },
             )),
             multisample: MultisampleState::default(),
-            fragment: None,
+            fragment: Some(FragmentState {
+                module: &depth_module,
+                entry_point: Some("fs_depth"),
+                compilation_options: Default::default(),
+                targets: &[],
+            }),
             multiview_mask: None,
             cache: None,
         });
@@ -410,6 +488,7 @@ impl Passes {
             frame_layout,
             view_layout,
             textures_layout,
+            depth_textures_layout,
             storage_layout,
             cull_input_layout,
             cull_output_layout,
@@ -417,6 +496,7 @@ impl Passes {
             tonemap_layout,
             skin_layout,
             mesh_pipeline,
+            blend_pipeline,
             depth_pipeline,
             shadow_pipeline,
             sky_pipeline,

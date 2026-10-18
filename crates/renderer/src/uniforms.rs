@@ -2,7 +2,7 @@ use bytemuck::{Pod, Zeroable};
 use foundation::{Frustum, MAX_SHADOW_CASCADES, Mat4, Vec4};
 
 pub const MAX_CASCADES: usize = MAX_SHADOW_CASCADES;
-pub const VIEW_COUNT: usize = 1 + MAX_CASCADES;
+pub const VIEW_COUNT: usize = 1 + MAX_CASCADES + 1;
 pub const VIEW_UNIFORM_STRIDE: u64 = 256;
 pub const VIEW_UNIFORM_SIZE: usize = 256;
 pub const COUNT_STRIDE: u64 = 256;
@@ -40,7 +40,7 @@ pub struct ViewUniform {
 }
 
 impl ViewUniform {
-    pub fn new(view_proj: Mat4, instance_count: u32) -> Self {
+    pub fn new(view_proj: Mat4, instance_count: u32, filter: u32) -> Self {
         let frustum = Frustum::from_view_projection(&view_proj);
         let mut planes = [Vec4::ZERO; 6];
         for (slot, plane) in planes.iter_mut().zip(frustum.planes.iter()) {
@@ -49,7 +49,7 @@ impl ViewUniform {
         Self {
             view_proj,
             planes,
-            counts: [instance_count, 0, 0, 0],
+            counts: [instance_count, filter, 0, 0],
             _pad: [Vec4::ZERO; 5],
         }
     }

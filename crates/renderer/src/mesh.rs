@@ -72,6 +72,24 @@ pub const TEXTURE_FLAT_NORMAL: u32 = 1;
 pub const TEXTURE_DEFAULT_MR: u32 = 2;
 pub const TEXTURE_BLACK: u32 = 3;
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AlphaMode {
+    #[default]
+    Opaque,
+    Mask,
+    Blend,
+}
+
+impl AlphaMode {
+    pub fn flag(self) -> f32 {
+        match self {
+            AlphaMode::Opaque => 0.0,
+            AlphaMode::Mask => 1.0,
+            AlphaMode::Blend => 2.0,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 pub struct MaterialData {
@@ -80,6 +98,7 @@ pub struct MaterialData {
     pub roughness_uv_scale: Vec4,
     pub uv_offset_flags: Vec4,
     pub textures: [u32; 4],
+    pub flags: Vec4,
 }
 
 impl Default for MaterialData {
@@ -101,7 +120,24 @@ impl MaterialData {
                 TEXTURE_DEFAULT_MR,
                 TEXTURE_BLACK,
             ],
+            flags: Vec4::new(0.0, 0.0, AlphaMode::Opaque.flag(), 0.5),
         }
+    }
+
+    pub fn with_alpha_mode(mut self, mode: AlphaMode, cutoff: f32) -> Self {
+        self.flags.z = mode.flag();
+        self.flags.w = cutoff;
+        self
+    }
+
+    pub fn with_double_sided(mut self, double_sided: bool) -> Self {
+        self.flags.x = if double_sided { 1.0 } else { 0.0 };
+        self
+    }
+
+    pub fn with_unlit(mut self, unlit: bool) -> Self {
+        self.flags.y = if unlit { 1.0 } else { 0.0 };
+        self
     }
 
     pub fn with_textures(mut self, albedo: u32, normal: u32, mr: u32, emissive: u32) -> Self {

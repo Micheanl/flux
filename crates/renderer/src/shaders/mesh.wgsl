@@ -107,24 +107,44 @@ fn sample_shadow(world_pos: vec3<f32>, normal: vec3<f32>, view_depth: f32) -> f3
 }
 
 @fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @location(0) vec4<f32> {
     let material = materials[input.material_index];
     let uv = input.uv * material.roughness_uv_scale.yz + material.uv_offset_flags.xy;
 
     let albedo_texture = textureSample(albedo_map, linear_sampler, uv, i32(material.textures.x));
-    let mr = textureSample(mr_map, linear_sampler, uv, i32(material.textures.z));
-    let normal_texture = textureSample(normal_map, linear_sampler, uv, i32(material.textures.y));
-    let emissive_texture = textureSample(emissive_map, linear_sampler, uv, i32(material.textures.w));
-
     let albedo = albedo_texture.rgb * material.base_color.rgb;
-    let metallic = clamp(mr.b * material.emissive_metallic.w, 0.0, 1.0);
-    let roughness = clamp(mr.g * material.roughness_uv_scale.x, 0.045, 1.0);
+    var alpha = albedo_texture.a * material.base_color.a;
+    let alpha_mode = material.flags.z;
+    if (alpha_mode > 0.5 && alpha_mode < 1.5 && alpha < material.flags.w) {
+        discard;
+    }
+    if (alpha_mode < 0.5) {
+        alpha = 1.0;
+    }
+    let double_sided = material.flags.x > 0.5;
+    if (!front_facing && !double_sided) {
+        discard;
+    }
 
-    let n = normalize(input.normal);
+    var n = normalize(input.normal);
+    if (!front_facing) {
+        n = -n;
+    }
     let t = normalize(input.tangent.xyz - n * dot(n, input.tangent.xyz));
     let b = cross(n, t) * input.tangent.w;
+    let normal_texture = textureSample(normal_map, linear_sampler, uv, i32(material.textures.y));
     let normal_sample = normal_texture.xyz * 2.0 - 1.0;
     let shading_normal = normalize(mat3x3<f32>(t, b, n) * normal_sample);
+
+    if (material.flags.y > 0.5) {
+        return vec4<f32>(albedo, alpha);
+    }
+
+    let mr = textureSample(mr_map, linear_sampler, uv, i32(material.textures.z));
+    let emissive_texture =
+        textureSample(emissive_map, linear_sampler, uv, i32(material.textures.w));
+    let metallic = clamp(mr.b * material.emissive_metallic.w, 0.0, 1.0);
+    let roughness = clamp(mr.g * material.roughness_uv_scale.x, 0.045, 1.0);
 
     let view_dir = normalize(frame.camera_pos.xyz - input.world_pos);
     let view_depth = linearize_depth(input.clip.z, frame.params.x);
@@ -165,5 +185,5 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(color, alpha);
 }

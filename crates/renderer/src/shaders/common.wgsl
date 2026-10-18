@@ -45,6 +45,7 @@ struct Material {
     roughness_uv_scale: vec4<f32>,
     uv_offset_flags: vec4<f32>,
     textures: vec4<u32>,
+    flags: vec4<f32>,
 };
 
 struct PointLight {

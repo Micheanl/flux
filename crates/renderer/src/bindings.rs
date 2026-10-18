@@ -83,6 +83,10 @@ pub fn scene_bindings(
                 binding: 1,
                 resource: scene.mesh_buffer.as_entire_binding(),
             },
+            BindGroupEntry {
+                binding: 2,
+                resource: scene.material_buffer.as_entire_binding(),
+            },
         ],
     });
 

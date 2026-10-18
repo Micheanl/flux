@@ -257,3 +257,65 @@ fn loads_skinned_primitive() {
     assert_eq!(model.meshes[0].vertices[0].weights, [1.0, 0.0, 0.0, 0.0]);
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn loads_material_extensions() {
+    let mut bytes = Vec::new();
+    for position in [[-1.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for value in position {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    for index in [0u16, 1, 2] {
+        bytes.extend_from_slice(&index.to_le_bytes());
+    }
+
+    let json = format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "extensionsUsed": ["KHR_materials_unlit", "KHR_materials_emissive_strength"],
+  "scene": 0,
+  "scenes": [ {{ "nodes": [0] }} ],
+  "nodes": [ {{ "mesh": 0 }} ],
+  "meshes": [ {{ "primitives": [ {{ "attributes": {{ "POSITION": 0 }}, "indices": 1, "material": 0 }} ] }} ],
+  "materials": [
+    {{
+      "alphaMode": "MASK",
+      "alphaCutoff": 0.3,
+      "doubleSided": true,
+      "emissiveFactor": [1.0, 0.5, 0.25],
+      "extensions": {{
+        "KHR_materials_unlit": {{}},
+        "KHR_materials_emissive_strength": {{ "emissiveStrength": 2.0 }}
+      }},
+      "pbrMetallicRoughness": {{ "metallicFactor": 0.4, "roughnessFactor": 0.6 }}
+    }}
+  ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+       "min": [-1.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] }},
+    {{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }}
+  ],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
+    {{ "buffer": 0, "byteOffset": 36, "byteLength": 6 }}
+  ],
+  "buffers": [ {{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }} ]
+}}"#,
+        bytes.len(),
+        base64_encode(&bytes)
+    );
+
+    let path = temp_path("materials.gltf");
+    std::fs::write(&path, json).unwrap();
+    let model = load_gltf(&path).expect("glTF loading failed");
+    let material = model.materials[0];
+    assert!((material.flags.x - 1.0).abs() < 1e-5);
+    assert!((material.flags.y - 1.0).abs() < 1e-5);
+    assert!((material.flags.z - 1.0).abs() < 1e-5);
+    assert!((material.flags.w - 0.3).abs() < 1e-5);
+    assert!((material.emissive_metallic.x - 2.0).abs() < 1e-5);
+    assert!((material.emissive_metallic.y - 1.0).abs() < 1e-5);
+    assert!((material.emissive_metallic.z - 0.5).abs() < 1e-5);
+    let _ = std::fs::remove_file(path);
+}

@@ -3,7 +3,7 @@ use std::path::Path;
 
 use foundation::{Aabb, Mat4, Quat, Transform, Vec3, Vec4};
 use renderer::{
-    DEFAULT_TEXTURE_LAYERS, MaterialData, MeshData, TEXTURE_BLACK, TEXTURE_DEFAULT_MR,
+    AlphaMode, DEFAULT_TEXTURE_LAYERS, MaterialData, MeshData, TEXTURE_BLACK, TEXTURE_DEFAULT_MR,
     TEXTURE_FLAT_NORMAL, TEXTURE_WHITE, TextureData, Vertex,
 };
 
@@ -241,7 +241,10 @@ fn read_primitive(
 ) -> Option<(MeshData, bool)> {
     let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()].0));
     let positions: Vec<[f32; 3]> = reader.read_positions()?.collect();
-    let indices: Vec<u32> = reader.read_indices()?.into_u32().collect();
+    let indices: Vec<u32> = match reader.read_indices() {
+        Some(indices) => indices.into_u32().collect(),
+        None => (0..positions.len() as u32).collect(),
+    };
     let joints: Vec<[u16; 4]> = reader
         .read_joints(0)
         .map(|joints| joints.into_u16().collect())
@@ -300,9 +303,21 @@ fn convert_material(
             .map(|layer| DEFAULT_TEXTURE_LAYERS + layer as u32)
     };
 
+    let alpha_mode = match material.alpha_mode() {
+        gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+        gltf::material::AlphaMode::Mask => AlphaMode::Mask,
+        gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+    };
+    let emissive_strength = material.emissive_strength().unwrap_or(1.0);
+
     MaterialData {
         base_color: Vec4::from_array(base_color),
-        emissive_metallic: Vec4::new(emissive[0], emissive[1], emissive[2], pbr.metallic_factor()),
+        emissive_metallic: Vec4::new(
+            emissive[0] * emissive_strength,
+            emissive[1] * emissive_strength,
+            emissive[2] * emissive_strength,
+            pbr.metallic_factor(),
+        ),
         roughness_uv_scale: Vec4::new(pbr.roughness_factor(), 1.0, 1.0, 0.0),
         uv_offset_flags: Vec4::ZERO,
         textures: [
@@ -313,6 +328,12 @@ fn convert_material(
                 .unwrap_or(TEXTURE_DEFAULT_MR),
             layer(material.emissive_texture().map(|info| info.texture())).unwrap_or(TEXTURE_BLACK),
         ],
+        flags: Vec4::new(
+            if material.double_sided() { 1.0 } else { 0.0 },
+            if material.unlit() { 1.0 } else { 0.0 },
+            alpha_mode.flag(),
+            material.alpha_cutoff().unwrap_or(0.5),
+        ),
     }
 }
 

@@ -16,6 +16,7 @@ use crate::uniforms::{
 };
 
 const MAX_JOINTS: usize = 16384;
+const TRANSPARENT_VIEW: usize = 1 + MAX_CASCADES;
 
 pub struct RenderStats {
     pub frame_index: u64,
@@ -45,6 +46,7 @@ pub struct Renderer {
     frame_bind_group: BindGroup,
     view_bind_group: BindGroup,
     scene_bindings: SceneBindings,
+    depth_textures_bind_group: BindGroup,
     target_bindings: TargetBindings,
     draw_buffer: Buffer,
     count_buffer: Buffer,
@@ -107,6 +109,7 @@ impl Renderer {
             &count_buffer,
         );
         let target_bindings = bindings::target_bindings(&device, &queue, &passes, &targets);
+        let depth_textures_bind_group = depth_textures_bind_group(&device, &passes, &gpu_scene);
 
         let joint_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("joint matrices"),
@@ -136,6 +139,7 @@ impl Renderer {
             frame_bind_group,
             view_bind_group,
             scene_bindings,
+            depth_textures_bind_group,
             target_bindings,
             draw_buffer,
             count_buffer,
@@ -268,6 +272,8 @@ impl Renderer {
                 &self.draw_buffer,
                 &self.count_buffer,
             );
+            self.depth_textures_bind_group =
+                depth_textures_bind_group(&self.device, &self.passes, &self.gpu_scene);
         }
 
         self.gpu_scene.update_instances(&self.queue, scene);
@@ -300,8 +306,9 @@ impl Renderer {
             self.config.shadow_map_size,
         );
 
-        let mut views = [ViewUniform::new(Mat4::IDENTITY, 0); VIEW_COUNT];
-        views[0] = ViewUniform::new(camera.view_projection, instance_count);
+        let mut views = [ViewUniform::new(Mat4::IDENTITY, 0, 0); VIEW_COUNT];
+        views[0] = ViewUniform::new(camera.view_projection, instance_count, 0);
+        views[TRANSPARENT_VIEW] = ViewUniform::new(camera.view_projection, instance_count, 1);
         for (index, matrix) in self
             .cascades
             .matrices
@@ -309,7 +316,7 @@ impl Renderer {
             .take(cascade_count as usize)
             .enumerate()
         {
-            views[index + 1] = ViewUniform::new(*matrix, instance_count);
+            views[index + 1] = ViewUniform::new(*matrix, instance_count, 0);
         }
         let view_bytes: Vec<u8> = views
             .iter()
@@ -375,22 +382,10 @@ impl Renderer {
         encoder.clear_buffer(&self.count_buffer, 0, None);
 
         if self.gpu_driven && instance_count > 0 {
-            let dispatch = instance_count.div_ceil(64);
             for view in 0..(1 + cascade_count as usize) {
-                let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("culling"),
-                    timestamp_writes: None,
-                });
-                pass.set_pipeline(&self.passes.cull_pipeline);
-                pass.set_bind_group(
-                    0,
-                    &self.view_bind_group,
-                    &[(view as u32) * VIEW_UNIFORM_STRIDE as u32],
-                );
-                pass.set_bind_group(1, &self.scene_bindings.cull_input, &[]);
-                pass.set_bind_group(2, &self.scene_bindings.cull_output[view], &[]);
-                pass.dispatch_workgroups(dispatch, 1, 1);
+                self.dispatch_cull(encoder, view, instance_count);
             }
+            self.dispatch_cull(encoder, TRANSPARENT_VIEW, instance_count);
         }
 
         for cascade in 0..cascade_count as usize {
@@ -415,6 +410,7 @@ impl Renderer {
                 &self.view_bind_group,
                 &[((cascade + 1) as u32) * VIEW_UNIFORM_STRIDE as u32],
             );
+            pass.set_bind_group(1, &self.depth_textures_bind_group, &[]);
             pass.set_bind_group(2, &self.scene_bindings.storage, &[]);
             pass.set_bind_group(3, &self.joint_bind_group, &[]);
             self.draw_geometry(&mut pass, scene, cascade + 1, instance_count);
@@ -438,6 +434,7 @@ impl Renderer {
             });
             pass.set_pipeline(&self.passes.depth_pipeline);
             pass.set_bind_group(0, &self.view_bind_group, &[0u32]);
+            pass.set_bind_group(1, &self.depth_textures_bind_group, &[]);
             pass.set_bind_group(2, &self.scene_bindings.storage, &[]);
             pass.set_bind_group(3, &self.joint_bind_group, &[]);
             self.draw_geometry(&mut pass, scene, 0, instance_count);
@@ -502,6 +499,38 @@ impl Renderer {
             pass.set_pipeline(&self.passes.sky_pipeline);
             pass.set_bind_group(0, &self.frame_bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+
+        if self.gpu_driven {
+            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+                label: Some("transparent"),
+                color_attachments: &[Some(RenderPassColorAttachment {
+                    view: &self.targets.hdr_view,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                    view: &self.targets.depth_view,
+                    depth_ops: Some(Operations {
+                        load: LoadOp::Load,
+                        store: StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&self.passes.blend_pipeline);
+            pass.set_bind_group(0, &self.frame_bind_group, &[]);
+            pass.set_bind_group(1, &self.scene_bindings.textures, &[]);
+            pass.set_bind_group(2, &self.scene_bindings.storage, &[]);
+            pass.set_bind_group(3, &self.joint_bind_group, &[]);
+            self.draw_geometry(&mut pass, scene, TRANSPARENT_VIEW, instance_count);
         }
 
         for (mip, target) in self.targets.bloom.iter().enumerate() {
@@ -578,6 +607,23 @@ impl Renderer {
         }
     }
 
+    fn dispatch_cull(&self, encoder: &mut CommandEncoder, view: usize, instance_count: u32) {
+        let dispatch = instance_count.div_ceil(64);
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+            label: Some("culling"),
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&self.passes.cull_pipeline);
+        pass.set_bind_group(
+            0,
+            &self.view_bind_group,
+            &[(view as u32) * VIEW_UNIFORM_STRIDE as u32],
+        );
+        pass.set_bind_group(1, &self.scene_bindings.cull_input, &[]);
+        pass.set_bind_group(2, &self.scene_bindings.cull_output[view], &[]);
+        pass.dispatch_workgroups(dispatch, 1, 1);
+    }
+
     fn draw_geometry(
         &self,
         pass: &mut RenderPass<'_>,
@@ -645,5 +691,22 @@ fn create_uniform_buffer(device: &Device, label: &str, size: u64) -> Buffer {
         size,
         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         mapped_at_creation: false,
+    })
+}
+
+fn depth_textures_bind_group(device: &Device, passes: &Passes, scene: &GpuScene) -> BindGroup {
+    device.create_bind_group(&BindGroupDescriptor {
+        label: Some("depth textures bindings"),
+        layout: &passes.depth_textures_layout,
+        entries: &[
+            BindGroupEntry {
+                binding: 0,
+                resource: BindingResource::TextureView(&scene.textures.albedo),
+            },
+            BindGroupEntry {
+                binding: 4,
+                resource: BindingResource::Sampler(&passes.linear_sampler),
+            },
+        ],
     })
 }
