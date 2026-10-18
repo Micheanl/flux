@@ -41,6 +41,7 @@ pub struct Engine {
     title_timer: f32,
     models: Vec<ModelRuntime>,
     model_bounds: Vec<(scene::Entity, Aabb)>,
+    dirty_meshes: Vec<u32>,
 }
 
 impl Engine {
@@ -75,6 +76,7 @@ impl Engine {
             title_timer: 0.0,
             models: Vec::new(),
             model_bounds: Vec::new(),
+            dirty_meshes: Vec::new(),
         })
     }
 
@@ -104,7 +106,31 @@ impl Engine {
             .set_camera_transform(self.camera_entity, self.camera.transform());
     }
 
+    pub fn update_mesh(&mut self, mesh: u32, data: renderer::MeshData) {
+        let Some(existing) = self.scene.render().meshes.get(mesh as usize) else {
+            return;
+        };
+        if existing.vertices.len() != data.vertices.len()
+            || existing.indices.len() != data.indices.len()
+        {
+            log::warn!("dynamic mesh topology change is not supported");
+            return;
+        }
+        self.scene.update_mesh(mesh, data);
+        self.dirty_meshes.push(mesh);
+    }
+
+    fn flush_dynamic_meshes(&mut self) {
+        if self.dirty_meshes.is_empty() {
+            return;
+        }
+        let meshes = std::mem::take(&mut self.dirty_meshes);
+        self.renderer
+            .update_mesh_vertices(self.scene.render(), &meshes);
+    }
+
     pub fn render_frame(&mut self) -> Flow {
+        self.flush_dynamic_meshes();
         let (width, height) = self.surface.size();
         let aspect = width as f32 / height.max(1) as f32;
         let render_scene = self.scene.extract(aspect);
@@ -128,6 +154,7 @@ impl Engine {
     }
 
     pub fn save_screenshot(&mut self, path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        self.flush_dynamic_meshes();
         let (width, height) = self.surface.size();
         let aspect = width as f32 / height.max(1) as f32;
         let stats = {
