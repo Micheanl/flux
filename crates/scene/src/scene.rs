@@ -9,7 +9,7 @@ use renderer::{
 
 use crate::components::{
     CameraComponent, Children, DirectionalLight, GlobalTransform, MeshRenderer, Name, Parent,
-    PointLight, Transform,
+    PointLight, Skin, Transform,
 };
 
 #[derive(Default)]
@@ -17,6 +17,7 @@ pub struct Scene {
     world: World,
     render: RenderScene,
     active_camera: Option<Entity>,
+    globals: HashMap<Entity, Mat4>,
 }
 
 impl Scene {
@@ -177,6 +178,7 @@ impl Scene {
                 let _ = self.world.insert(*entity, GlobalTransform(*global));
             }
         }
+        self.globals = globals;
     }
 
     fn extract_camera(&mut self, aspect: f32) {
@@ -236,26 +238,45 @@ impl Scene {
 
     fn extract_instances(&mut self) {
         let mut instances = Vec::new();
+        let mut joint_matrices = Vec::new();
         {
+            let globals = &self.globals;
             let render = &self.render;
-            for (mesh_renderer, global) in self
+            for (mesh_renderer, global, skin) in self
                 .world
-                .query::<(&MeshRenderer, &GlobalTransform)>()
+                .query::<(&MeshRenderer, &GlobalTransform, Option<&Skin>)>()
                 .iter()
             {
                 let Some(mesh) = render.meshes.get(mesh_renderer.mesh as usize) else {
                     continue;
                 };
                 let bounds: Aabb = mesh.bounds;
-                instances.push(InstanceData::new(
-                    global.0,
-                    &bounds,
-                    mesh_renderer.mesh,
-                    mesh_renderer.material,
-                ));
+                if let Some(skin) = skin {
+                    let skin_offset = joint_matrices.len() as u32;
+                    for (joint, inverse_bind) in skin.joints.iter().zip(&skin.inverse_bind_matrices)
+                    {
+                        let joint_global = globals.get(joint).copied().unwrap_or(Mat4::IDENTITY);
+                        joint_matrices.push(joint_global * *inverse_bind);
+                    }
+                    instances.push(InstanceData::skinned(
+                        global.0,
+                        &bounds,
+                        mesh_renderer.mesh,
+                        mesh_renderer.material,
+                        skin_offset,
+                    ));
+                } else {
+                    instances.push(InstanceData::new(
+                        global.0,
+                        &bounds,
+                        mesh_renderer.mesh,
+                        mesh_renderer.material,
+                    ));
+                }
             }
         }
         self.render.instances = instances;
+        self.render.joint_matrices = joint_matrices;
     }
 }
 

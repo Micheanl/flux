@@ -79,3 +79,9 @@ pub struct Children(pub Vec<Entity>);
 
 #[derive(Clone, Debug, Default)]
 pub struct Name(pub String);
+
+#[derive(Clone, Debug)]
+pub struct Skin {
+    pub joints: Vec<Entity>,
+    pub inverse_bind_matrices: Vec<Mat4>,
+}
