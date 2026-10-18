@@ -16,6 +16,17 @@ struct Stats {
     instances: u32,
 }
 
+struct ModelRuntime {
+    root: scene::Entity,
+    nodes: Vec<Option<scene::Entity>>,
+    base_transforms: Vec<Transform>,
+    animations: Vec<assets::AnimationClip>,
+    current: Option<usize>,
+    time: f32,
+    speed: f32,
+    looping: bool,
+}
+
 pub struct Engine {
     gpu: Gpu,
     surface: Surface,
@@ -28,6 +39,7 @@ pub struct Engine {
     stats: Stats,
     last_frame: Instant,
     title_timer: f32,
+    models: Vec<ModelRuntime>,
 }
 
 impl Engine {
@@ -60,6 +72,7 @@ impl Engine {
             stats: Stats::default(),
             last_frame: Instant::now(),
             title_timer: 0.0,
+            models: Vec::new(),
         })
     }
 
@@ -139,7 +152,12 @@ impl Engine {
         let mesh_count = model.meshes.len();
         let material_count = model.materials.len();
         let texture_count = model.textures.len();
-        let instance_count = model.instances.len();
+        let primitive_count: usize = model.nodes.iter().map(|node| node.primitives.len()).sum();
+        let animation_names: Vec<String> = model
+            .animations
+            .iter()
+            .map(|clip| clip.name.clone())
+            .collect();
 
         for texture in model.textures {
             self.scene.add_texture(texture);
@@ -176,26 +194,178 @@ impl Engine {
             scene::Name(name.to_string()),
         ));
 
-        for instance in &model.instances {
-            let mesh = mesh_base.get(instance.mesh as usize).copied().unwrap_or(0);
-            let entity = self.scene.spawn_mesh(
-                mesh,
-                material_offset + instance.material,
-                instance.transform,
-            );
-            self.scene.set_parent(entity, root);
-            self.scene.set_name(entity, &instance.name);
+        let node_count = model.nodes.len();
+        let mut children: Vec<Vec<usize>> = vec![Vec::new(); node_count];
+        for (index, node) in model.nodes.iter().enumerate() {
+            if let Some(parent) = node.parent {
+                children[parent].push(index);
+            }
+        }
+        let mut reachable = vec![false; node_count];
+        let mut pending = model.roots.clone();
+        while let Some(index) = pending.pop() {
+            if index >= node_count || reachable[index] {
+                continue;
+            }
+            reachable[index] = true;
+            pending.extend(children[index].iter().copied());
+        }
+
+        let mut node_entities: Vec<Option<scene::Entity>> = vec![None; node_count];
+        let mut base_transforms = vec![Transform::default(); node_count];
+        for (index, node) in model.nodes.iter().enumerate() {
+            if !reachable[index] {
+                continue;
+            }
+            base_transforms[index] = node.transform;
+            let entity = self.scene.spawn((
+                node.transform,
+                scene::GlobalTransform(node.transform.matrix()),
+                scene::Name(node.name.clone()),
+            ));
+            node_entities[index] = Some(entity);
+        }
+        for (index, node) in model.nodes.iter().enumerate() {
+            let Some(Some(entity)) = node_entities.get(index).copied() else {
+                continue;
+            };
+            let parent = node
+                .parent
+                .and_then(|parent| node_entities.get(parent).copied().flatten())
+                .unwrap_or(root);
+            self.scene.set_parent(entity, parent);
+        }
+        for (index, node) in model.nodes.iter().enumerate() {
+            let Some(Some(node_entity)) = node_entities.get(index).copied() else {
+                continue;
+            };
+            for primitive in &node.primitives {
+                let mesh = mesh_base.get(primitive.mesh as usize).copied().unwrap_or(0);
+                let entity = self.scene.spawn_mesh(
+                    mesh,
+                    material_offset + primitive.material,
+                    Transform::default(),
+                );
+                self.scene.set_parent(entity, node_entity);
+            }
+        }
+
+        let animations = model.animations;
+        if !animations.is_empty() {
+            self.models.push(ModelRuntime {
+                root,
+                nodes: node_entities,
+                base_transforms,
+                animations,
+                current: None,
+                time: 0.0,
+                speed: 1.0,
+                looping: true,
+            });
         }
 
         log::info!(
-            "loaded model {}: {} meshes, {} materials, {} textures, {} instances",
+            "loaded model {}: {} nodes, {} primitives, {} meshes, {} materials, {} animations",
             path.display(),
+            node_count,
+            primitive_count,
             mesh_count,
             material_count,
-            texture_count,
-            instance_count
+            animation_names.len()
         );
+        for name in &animation_names {
+            log::info!("animation: {name}");
+        }
+        let _ = (texture_count, animation_names);
         Ok(root)
+    }
+
+    pub fn animation_count(&self, model: scene::Entity) -> usize {
+        self.model_runtime(model)
+            .map(|runtime| runtime.animations.len())
+            .unwrap_or(0)
+    }
+
+    pub fn animation_name(&self, model: scene::Entity, index: usize) -> Option<&str> {
+        self.model_runtime(model)
+            .and_then(|runtime| runtime.animations.get(index))
+            .map(|clip| clip.name.as_str())
+    }
+
+    pub fn play_animation(&mut self, model: scene::Entity, index: usize) -> bool {
+        let Some(runtime) = self.model_runtime_mut(model) else {
+            return false;
+        };
+        if index >= runtime.animations.len() {
+            return false;
+        }
+        runtime.current = Some(index);
+        runtime.time = 0.0;
+        true
+    }
+
+    pub fn set_animation_looping(&mut self, model: scene::Entity, looping: bool) {
+        if let Some(runtime) = self.model_runtime_mut(model) {
+            runtime.looping = looping;
+        }
+    }
+
+    pub fn set_animation_speed(&mut self, model: scene::Entity, speed: f32) {
+        if let Some(runtime) = self.model_runtime_mut(model) {
+            runtime.speed = speed;
+        }
+    }
+
+    pub fn advance_animations(&mut self, dt: f32) {
+        let mut updates: Vec<(scene::Entity, Transform)> = Vec::new();
+        for runtime in &mut self.models {
+            let Some(index) = runtime.current else {
+                continue;
+            };
+            let Some(clip) = runtime.animations.get(index) else {
+                continue;
+            };
+            runtime.time += dt * runtime.speed;
+            if clip.duration > 0.0 {
+                runtime.time = if runtime.looping {
+                    runtime.time.rem_euclid(clip.duration)
+                } else {
+                    runtime.time.min(clip.duration)
+                };
+            }
+            for pose in clip.sample(runtime.time) {
+                let Some(Some(entity)) = runtime.nodes.get(pose.node).copied() else {
+                    continue;
+                };
+                let Some(base) = runtime.base_transforms.get(pose.node).copied() else {
+                    continue;
+                };
+                let mut transform = base;
+                if let Some(translation) = pose.translation {
+                    transform.translation = translation;
+                }
+                if let Some(rotation) = pose.rotation {
+                    transform.rotation = rotation;
+                }
+                if let Some(scale) = pose.scale {
+                    transform.scale = scale;
+                }
+                updates.push((entity, transform));
+            }
+        }
+        for (entity, transform) in updates {
+            if let Some(mut slot) = self.scene.world_mut().get_mut::<Transform>(entity) {
+                *slot = transform;
+            }
+        }
+    }
+
+    fn model_runtime(&self, model: scene::Entity) -> Option<&ModelRuntime> {
+        self.models.iter().find(|runtime| runtime.root == model)
+    }
+
+    fn model_runtime_mut(&mut self, model: scene::Entity) -> Option<&mut ModelRuntime> {
+        self.models.iter_mut().find(|runtime| runtime.root == model)
     }
 
     fn update_stats(&mut self) {

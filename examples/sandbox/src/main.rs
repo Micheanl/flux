@@ -13,6 +13,8 @@ struct Sandbox {
     frame: u64,
     model_path: Option<std::path::PathBuf>,
     model_root: Option<Entity>,
+    animation_count: usize,
+    animation_index: usize,
 }
 
 impl App for Sandbox {
@@ -46,11 +48,18 @@ impl App for Sandbox {
         );
 
         let mut model_root = None;
+        let mut animation_count = 0;
+        let animation_index = 0;
         if let Some(path) = &model_path {
             match engine.spawn_model(path) {
                 Ok(root) => {
                     model_root = Some(root);
-                    spinners.push((root, 0.35));
+                    animation_count = engine.animation_count(root);
+                    if animation_count > 0 {
+                        engine.play_animation(root, 0);
+                    } else {
+                        spinners.push((root, 0.35));
+                    }
                     engine.set_camera_pose(Vec3::new(0.0, 1.6, 5.0), 0.0, -0.12);
                     log::info!("model mode: {}", path.display());
                 }
@@ -85,6 +94,8 @@ impl App for Sandbox {
             frame: 0,
             model_path,
             model_root,
+            animation_count,
+            animation_index,
         }
     }
 
@@ -99,6 +110,9 @@ impl App for Sandbox {
         }
         if input.key_pressed(KeyCode::KeyR) {
             self.reload_model(engine);
+        }
+        if input.key_pressed(KeyCode::KeyN) {
+            self.next_animation(engine);
         }
 
         self.frame += 1;
@@ -129,11 +143,31 @@ impl Sandbox {
             Ok(root) => {
                 self.model_root = Some(root);
                 self.spinners.retain(|(entity, _)| *entity != root);
-                self.spinners.push((root, 0.35));
+                self.animation_count = engine.animation_count(root);
+                self.animation_index = 0;
+                if self.animation_count > 0 {
+                    engine.play_animation(root, 0);
+                } else {
+                    self.spinners.push((root, 0.35));
+                }
                 log::info!("model reloaded: {}", path.display());
             }
             Err(error) => log::error!("model reload failed: {error}"),
         }
+    }
+
+    fn next_animation(&mut self, engine: &mut Engine) {
+        let (Some(root), true) = (self.model_root, self.animation_count > 1) else {
+            return;
+        };
+        self.animation_index = (self.animation_index + 1) % self.animation_count;
+        engine.play_animation(root, self.animation_index);
+        log::info!(
+            "animation: {}",
+            engine
+                .animation_name(root, self.animation_index)
+                .unwrap_or("?")
+        );
     }
 
     fn animate(&mut self, engine: &mut Engine) {

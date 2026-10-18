@@ -44,6 +44,7 @@ impl<A: App> platform::Application for Runtime<A> {
         if app.update(engine, input, time) == Flow::Exit {
             return Flow::Exit;
         }
+        engine.advance_animations(time.delta);
         engine.render_frame()
     }
 
