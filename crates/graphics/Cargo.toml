@@ -1,0 +1,13 @@
+[package]
+name = "graphics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+log.workspace = true
+pollster.workspace = true
+raw-window-handle.workspace = true
+wgpu.workspace = true
