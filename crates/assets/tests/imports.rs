@@ -142,6 +142,7 @@ fn loads_mmd_model() {
         .expect("MMD loading failed");
     assert_eq!(model.meshes.len(), 2);
     assert_eq!(model.materials.len(), 2);
+    assert_eq!(model.textures.len(), 2);
     assert_eq!(model.skins.len(), 1);
     assert_eq!(model.skins[0].joints.len(), 7);
     assert_eq!(model.animations.len(), 1);

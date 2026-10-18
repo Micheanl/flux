@@ -3,8 +3,8 @@ use std::path::Path;
 
 use foundation::{Aabb, Mat4, Quat, Transform, Vec3, Vec4};
 use renderer::{
-    AlphaMode, MaterialData, MeshData, TEXTURE_BLACK, TEXTURE_DEFAULT_MR, TEXTURE_FLAT_NORMAL,
-    TEXTURE_WHITE, TextureData, Vertex,
+    AlphaMode, DEFAULT_TEXTURE_LAYERS, MaterialData, MeshData, TEXTURE_BLACK, TEXTURE_DEFAULT_MR,
+    TEXTURE_FLAT_NORMAL, TEXTURE_WHITE, TextureData, Vertex,
 };
 
 use crate::animation::{AnimationClip, AnimationTrack, Interpolation, TrackValues};
@@ -50,7 +50,7 @@ fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> Loa
             .as_deref()
             .and_then(|path| load_image(path).ok())
             .unwrap_or_else(|| TextureData::from_rgba8(1, 1, vec![255, 255, 255, 255]));
-        texture_layers.insert(index as i32, textures.len() as u32);
+        texture_layers.insert(index as i32, DEFAULT_TEXTURE_LAYERS + textures.len() as u32);
         textures.push(texture);
     }
 
