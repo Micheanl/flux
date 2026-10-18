@@ -36,7 +36,8 @@ pub fn load_mmd(path: &Path, motion: Option<&Path>) -> Result<LoadedModel, Asset
 fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> LoadedModel {
     let mut textures = Vec::new();
     let mut texture_layers: HashMap<i32, u32> = HashMap::new();
-    let mut transparent_textures = std::collections::HashSet::new();
+    let mut cutout_textures = std::collections::HashSet::new();
+    let mut blend_textures = std::collections::HashSet::new();
     for (index, _) in model.textures.iter().enumerate() {
         let material_uses = model
             .materials
@@ -46,24 +47,30 @@ fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> Loa
             continue;
         }
         let path = resolve_texture(directory, &model.textures[index]);
-        let (texture, has_alpha) = match path.as_deref() {
+        let (texture, alpha_mode) = match path.as_deref() {
             Some(path) => match load_image_with_alpha(path) {
                 Ok(texture) => texture,
                 Err(error) => {
                     log::debug!("missing texture {:?}: {error}", model.textures[index]);
                     (
                         TextureData::from_rgba8(1, 1, vec![255, 255, 255, 255]),
-                        false,
+                        TextureAlpha::None,
                     )
                 }
             },
             None => (
                 TextureData::from_rgba8(1, 1, vec![255, 255, 255, 255]),
-                false,
+                TextureAlpha::None,
             ),
         };
-        if has_alpha {
-            transparent_textures.insert(index as i32);
+        match alpha_mode {
+            TextureAlpha::None => {}
+            TextureAlpha::Cutout => {
+                cutout_textures.insert(index as i32);
+            }
+            TextureAlpha::Blend => {
+                blend_textures.insert(index as i32);
+            }
         }
         texture_layers.insert(index as i32, DEFAULT_TEXTURE_LAYERS + textures.len() as u32);
         textures.push(texture);
@@ -184,7 +191,8 @@ fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> Loa
         materials.push(convert_material(
             material,
             &texture_layers,
-            transparent_textures.contains(&material.texture),
+            cutout_textures.contains(&material.texture),
+            blend_textures.contains(&material.texture),
         ));
     }
 
@@ -248,7 +256,8 @@ fn resolve_texture(directory: &Path, name: &str) -> Option<std::path::PathBuf> {
 fn convert_material(
     material: &PmxMaterial,
     texture_layers: &HashMap<i32, u32>,
-    transparent: bool,
+    cutout: bool,
+    blend: bool,
 ) -> MaterialData {
     let albedo = texture_layers
         .get(&material.texture)
@@ -268,14 +277,22 @@ fn convert_material(
         flags: Vec4::ZERO,
     };
     let data = data.with_double_sided(material.double_sided);
-    if transparent || material.diffuse.w < 0.999 {
+    if blend || material.diffuse.w < 0.999 {
         data.with_alpha_mode(AlphaMode::Blend, 0.5)
+    } else if cutout {
+        data.with_alpha_mode(AlphaMode::Mask, 0.5)
     } else {
         data
     }
 }
 
-fn load_image_with_alpha(path: &Path) -> Result<(TextureData, bool), AssetError> {
+enum TextureAlpha {
+    None,
+    Cutout,
+    Blend,
+}
+
+fn load_image_with_alpha(path: &Path) -> Result<(TextureData, TextureAlpha), AssetError> {
     let mut image = image::open(path)?.to_rgba8();
     let alpha_path = path.with_file_name(format!(
         "{}_Alpha.png",
@@ -292,19 +309,28 @@ fn load_image_with_alpha(path: &Path) -> Result<(TextureData, bool), AssetError>
                 || name.starts_with("Tail")
                 || name.starts_with("Fur")
         });
+    let mut companion_alpha = false;
     if allow_alpha && alpha_path.exists() {
         let mask = image::open(&alpha_path)?.to_luma8();
         if mask.dimensions() == image.dimensions() {
             for (pixel, mask) in image.pixels_mut().zip(mask.pixels()) {
                 pixel.0[3] = ((pixel.0[3] as u16 * mask.0[0] as u16) / 255) as u8;
             }
+            companion_alpha = true;
         }
     }
     let (width, height) = image.dimensions();
     let has_alpha = image.pixels().any(|pixel| pixel.0[3] < 250);
+    let mode = if companion_alpha {
+        TextureAlpha::Cutout
+    } else if has_alpha {
+        TextureAlpha::Blend
+    } else {
+        TextureAlpha::None
+    };
     Ok((
         TextureData::from_rgba8(width, height, image.into_raw()),
-        has_alpha,
+        mode,
     ))
 }
 
