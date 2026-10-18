@@ -7,8 +7,8 @@ mod mmd;
 pub use animation::{AnimationClip, AnimationTrack, Interpolation, NodePose, TrackValues};
 pub use error::AssetError;
 pub use gltf_loader::{
-    LightKind, LoadedModel, ModelLight, ModelMorph, ModelNode, ModelPrimitive, ModelSkin,
-    MorphTarget, load_gltf,
+    LightKind, LoadedModel, ModelInherit, ModelLight, ModelMorph, ModelNode, ModelPrimitive,
+    ModelSkin, MorphTarget, load_gltf,
 };
 pub use image_loader::load_image;
-pub use mmd::load_mmd;
+pub use mmd::{load_mmd, load_mmd_animation};

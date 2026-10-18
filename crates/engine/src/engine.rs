@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use foundation::{Aabb, Mat4, Transform, Vec3};
+use foundation::{Aabb, EulerRot, Mat4, Quat, Transform, Vec2, Vec3};
 use graphics::{Gpu, GpuConfig, Surface};
 use platform::{Flow, Input, WindowRef};
 use renderer::{DEFAULT_TEXTURE_LAYERS, MeshData, RenderOutcome, Renderer, RendererConfig};
@@ -24,8 +24,20 @@ struct MorphMesh {
     weights: Vec<f32>,
 }
 
+struct SecondaryBone {
+    node: usize,
+    angle: Vec2,
+    velocity: Vec2,
+    stiffness: f32,
+    damping: f32,
+    phase: f32,
+    limit: f32,
+    drive: f32,
+}
+
 struct ModelRuntime {
     root: scene::Entity,
+    source: std::path::PathBuf,
     nodes: Vec<Option<scene::Entity>>,
     base_transforms: Vec<Transform>,
     animations: Vec<assets::AnimationClip>,
@@ -34,6 +46,9 @@ struct ModelRuntime {
     speed: f32,
     looping: bool,
     morphs: Vec<MorphMesh>,
+    secondary: Vec<SecondaryBone>,
+    last_root_position: Vec3,
+    secondary_time: f32,
 }
 
 pub struct Engine {
@@ -390,30 +405,78 @@ impl Engine {
                     color,
                     intensity,
                     range,
-                    ..
-                } => self.scene.spawn_point_light(
+                    inner_cone,
+                    outer_cone,
+                } => self.scene.spawn_spot_light(
                     Transform::default(),
-                    scene::PointLight::new(*color, *intensity, *range),
+                    scene::SpotLight::new(*color, *intensity, *range, *inner_cone, *outer_cone),
                 ),
             };
             self.scene.set_parent(entity, node_entity);
         }
 
-        let light_count = model.lights.len();
-        let animations = model.animations;
-        if !animations.is_empty() {
-            self.models.push(ModelRuntime {
-                root,
-                nodes: node_entities,
-                base_transforms,
-                animations,
-                current: None,
-                time: 0.0,
-                speed: 1.0,
-                looping: true,
-                morphs,
-            });
+        let mut secondary = Vec::new();
+        if path.extension().is_some_and(|extension| extension == "pmx") {
+            let candidates: Vec<usize> = model
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, node)| is_secondary_bone(&node.name))
+                .map(|(index, _)| index)
+                .collect();
+            let candidate_set: std::collections::HashSet<usize> =
+                candidates.iter().copied().collect();
+            for index in candidates {
+                if node_entities.get(index).copied().flatten().is_none() {
+                    continue;
+                }
+                let node = &model.nodes[index];
+                let mut depth = 0usize;
+                let mut current = node.parent;
+                while let Some(parent) = current {
+                    if candidate_set.contains(&parent) {
+                        depth += 1;
+                    }
+                    current = model.nodes.get(parent).and_then(|parent| parent.parent);
+                }
+                let seed = node.name.bytes().fold(0u32, |acc, byte| {
+                    acc.wrapping_mul(31).wrapping_add(byte as u32)
+                });
+                let hair = node.name.to_lowercase().contains("hair");
+                let scale = if hair { 0.3 } else { 0.8 };
+                let depth_factor = 1.0 + (depth as f32) * (depth as f32) * 0.4;
+                secondary.push(SecondaryBone {
+                    node: index,
+                    angle: Vec2::ZERO,
+                    velocity: Vec2::ZERO,
+                    stiffness: 30.0 + (seed % 17) as f32,
+                    damping: 5.0 + (seed % 5) as f32 * 0.5,
+                    phase: (seed % 100) as f32 * 0.07,
+                    limit: scale * 0.16 / depth_factor,
+                    drive: scale * 0.8 / depth_factor,
+                });
+            }
+            if !secondary.is_empty() {
+                log::info!("secondary motion bones: {}", secondary.len());
+            }
         }
+
+        let light_count = model.lights.len();
+        self.models.push(ModelRuntime {
+            root,
+            source: path.to_path_buf(),
+            nodes: node_entities,
+            base_transforms,
+            animations: model.animations,
+            current: None,
+            time: 0.0,
+            speed: 1.0,
+            looping: true,
+            morphs,
+            secondary,
+            last_root_position: Vec3::ZERO,
+            secondary_time: 0.0,
+        });
 
         self.model_bounds
             .retain(|(entity, _)| self.scene.world().get::<Transform>(*entity).is_some());
@@ -459,6 +522,22 @@ impl Engine {
         true
     }
 
+    pub fn add_animation(
+        &mut self,
+        model: scene::Entity,
+        motion: impl AsRef<std::path::Path>,
+    ) -> Result<usize, assets::AssetError> {
+        let motion = motion.as_ref();
+        let Some(runtime) = self.models.iter_mut().find(|runtime| runtime.root == model) else {
+            return Err(assets::AssetError::Unsupported(
+                "no model runtime for entity".to_string(),
+            ));
+        };
+        let clip = assets::load_mmd_animation(&runtime.source, motion)?;
+        runtime.animations.push(clip);
+        Ok(runtime.animations.len() - 1)
+    }
+
     pub fn animation_count(&self, model: scene::Entity) -> usize {
         self.model_runtime(model)
             .map(|runtime| runtime.animations.len())
@@ -496,74 +575,128 @@ impl Engine {
     }
 
     pub fn advance_animations(&mut self, dt: f32) {
-        let mut updates: Vec<(scene::Entity, Transform)> = Vec::new();
         let mut morph_updates: Vec<(u32, MeshData)> = Vec::new();
-        for runtime in &mut self.models {
-            let Some(index) = runtime.current else {
-                continue;
-            };
-            let Some(clip) = runtime.animations.get(index) else {
-                continue;
-            };
-            runtime.time += dt * runtime.speed;
-            if clip.duration > 0.0 {
-                runtime.time = if runtime.looping {
-                    runtime.time.rem_euclid(clip.duration)
-                } else {
-                    runtime.time.min(clip.duration)
-                };
-            }
-            for pose in clip.sample(runtime.time) {
-                let Some(Some(entity)) = runtime.nodes.get(pose.node).copied() else {
-                    continue;
-                };
-                let Some(base) = runtime.base_transforms.get(pose.node).copied() else {
-                    continue;
-                };
-                let mut transform = base;
-                if let Some(translation) = pose.translation {
-                    transform.translation = translation;
-                }
-                if let Some(rotation) = pose.rotation {
-                    transform.rotation = rotation;
-                }
-                if let Some(scale) = pose.scale {
-                    transform.scale = scale;
-                }
-                updates.push((entity, transform));
-                if let Some(weights) = &pose.weights {
-                    for morph in runtime
-                        .morphs
-                        .iter_mut()
-                        .filter(|morph| morph.node == pose.node)
-                    {
-                        if morph.weights.len() != weights.len() {
-                            continue;
-                        }
-                        let changed = morph
-                            .weights
-                            .iter()
-                            .zip(weights)
-                            .any(|(old, new)| (old - new).abs() > 1e-5);
-                        if !changed {
-                            continue;
-                        }
-                        morph.weights.copy_from_slice(weights);
-                        morph_updates.push((
-                            morph.mesh,
-                            morphed_mesh(&morph.base, &morph.targets, &morph.weights),
-                        ));
+        for model_index in 0..self.models.len() {
+            let mut transforms = self.models[model_index].base_transforms.clone();
+            {
+                let runtime = &mut self.models[model_index];
+                if let Some(index) = runtime.current
+                    && let Some(clip) = runtime.animations.get(index)
+                {
+                    runtime.time += dt * runtime.speed;
+                    if clip.duration > 0.0 {
+                        runtime.time = if runtime.looping {
+                            runtime.time.rem_euclid(clip.duration)
+                        } else {
+                            runtime.time.min(clip.duration)
+                        };
                     }
+                    for pose in clip.sample(runtime.time) {
+                        let Some(base) = runtime.base_transforms.get(pose.node).copied() else {
+                            continue;
+                        };
+                        let Some(transform) = transforms.get_mut(pose.node) else {
+                            continue;
+                        };
+                        let mut value = base;
+                        if let Some(translation) = pose.translation {
+                            value.translation = translation;
+                        }
+                        if let Some(rotation) = pose.rotation {
+                            value.rotation = rotation;
+                        }
+                        if let Some(scale) = pose.scale {
+                            value.scale = scale;
+                        }
+                        *transform = value;
+                        if let Some(weights) = &pose.weights {
+                            for morph in runtime
+                                .morphs
+                                .iter_mut()
+                                .filter(|morph| morph.node == pose.node)
+                            {
+                                if morph.weights.len() != weights.len() {
+                                    continue;
+                                }
+                                let changed = morph
+                                    .weights
+                                    .iter()
+                                    .zip(weights)
+                                    .any(|(old, new)| (old - new).abs() > 1e-5);
+                                if !changed {
+                                    continue;
+                                }
+                                morph.weights.copy_from_slice(weights);
+                                morph_updates.push((
+                                    morph.mesh,
+                                    morphed_mesh(&morph.base, &morph.targets, &morph.weights),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            {
+                let runtime = &mut self.models[model_index];
+                if !runtime.secondary.is_empty() && dt > 0.0 {
+                    let root = runtime.root;
+                    let root_position = self
+                        .scene
+                        .world()
+                        .get::<Transform>(root)
+                        .map(|transform| transform.translation)
+                        .unwrap_or(Vec3::ZERO);
+                    let velocity = (root_position - runtime.last_root_position) / dt.max(1e-5);
+                    runtime.last_root_position = root_position;
+                    runtime.secondary_time += dt;
+                    let time = runtime.secondary_time;
+                    let rotation = self
+                        .scene
+                        .world()
+                        .get::<Transform>(root)
+                        .map(|transform| transform.rotation)
+                        .unwrap_or(Quat::IDENTITY);
+                    let local_velocity = rotation.inverse() * velocity;
+                    for bone in &mut runtime.secondary {
+                        let wind = Vec2::new(
+                            (time * 1.6 + bone.phase).sin() * 0.05,
+                            (time * 1.1 + bone.phase * 0.5).cos() * 0.025,
+                        );
+                        let target = Vec2::new(
+                            ((local_velocity.x * 0.1 + wind.x) * bone.drive)
+                                .clamp(-bone.limit, bone.limit),
+                            ((-local_velocity.z * 0.12 + wind.y) * bone.drive)
+                                .clamp(-bone.limit, bone.limit),
+                        );
+                        let force =
+                            (target - bone.angle) * bone.stiffness - bone.velocity * bone.damping;
+                        bone.velocity += force * dt;
+                        bone.angle += bone.velocity * dt;
+                        bone.angle = bone
+                            .angle
+                            .clamp(Vec2::splat(-bone.limit), Vec2::splat(bone.limit));
+                        let offset =
+                            Quat::from_euler(EulerRot::YXZ, bone.angle.x, bone.angle.y, 0.0);
+                        if let Some(transform) = transforms.get_mut(bone.node) {
+                            transform.rotation *= offset;
+                        }
+                    }
+                }
+            }
+            for (node, entity) in self.models[model_index].nodes.iter().enumerate() {
+                let Some(entity) = *entity else {
+                    continue;
+                };
+                let Some(transform) = transforms.get(node).copied() else {
+                    continue;
+                };
+                if let Some(mut slot) = self.scene.world_mut().get_mut::<Transform>(entity) {
+                    *slot = transform;
                 }
             }
         }
         for (mesh, data) in morph_updates {
             self.update_mesh(mesh, data);
-        }
-        for (entity, transform) in updates {
-            if let Some(mut slot) = self.scene.world_mut().get_mut::<Transform>(entity) {
-                *slot = transform;
-            }
         }
     }
 
@@ -671,4 +804,28 @@ fn morphed_mesh(base: &MeshData, targets: &[assets::MorphTarget], weights: &[f32
             .map(|vertex| Vec3::from_array(vertex.position)),
     );
     data
+}
+
+fn is_secondary_bone(name: &str) -> bool {
+    const PATTERNS: [&str; 16] = [
+        "dress",
+        "sleeve",
+        "skirt",
+        "coat",
+        "cape",
+        "mantle",
+        "hair",
+        "tail",
+        "breasttie",
+        "fur",
+        "liusu",
+        "ribbon",
+        "cloth",
+        "垂",
+        "裾",
+        "袖",
+    ];
+    PATTERNS
+        .iter()
+        .any(|pattern| name.to_lowercase().contains(&pattern.to_lowercase()))
 }

@@ -1,0 +1,249 @@
+{
+  "asset": {
+    "version": "2.0"
+  },
+  "extensionsUsed": [
+    "KHR_lights_punctual"
+  ],
+  "extensions": {
+    "KHR_lights_punctual": {
+      "lights": [
+        {
+          "type": "spot",
+          "color": [
+            1.0,
+            0.15,
+            0.1
+          ],
+          "intensity": 60.0,
+          "range": 12.0,
+          "spot": {
+            "innerConeAngle": 0.22,
+            "outerConeAngle": 0.55
+          }
+        },
+        {
+          "type": "spot",
+          "color": [
+            0.2,
+            1.0,
+            0.3
+          ],
+          "intensity": 60.0,
+          "range": 12.0,
+          "spot": {
+            "innerConeAngle": 0.22,
+            "outerConeAngle": 0.55
+          }
+        },
+        {
+          "type": "spot",
+          "color": [
+            0.25,
+            0.45,
+            1.0
+          ],
+          "intensity": 60.0,
+          "range": 12.0,
+          "spot": {
+            "innerConeAngle": 0.22,
+            "outerConeAngle": 0.55
+          }
+        }
+      ]
+    }
+  },
+  "scene": 0,
+  "scenes": [
+    {
+      "nodes": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  ],
+  "nodes": [
+    {
+      "name": "box_left",
+      "mesh": 0,
+      "translation": [
+        -2.0,
+        0.7,
+        0.0
+      ]
+    },
+    {
+      "name": "box_center",
+      "mesh": 0,
+      "translation": [
+        0.0,
+        0.7,
+        0.0
+      ]
+    },
+    {
+      "name": "box_right",
+      "mesh": 0,
+      "translation": [
+        2.0,
+        0.7,
+        0.0
+      ]
+    },
+    {
+      "name": "red spot",
+      "translation": [
+        -2.0,
+        4.2,
+        0.0
+      ],
+      "rotation": [
+        -0.7071,
+        0.0,
+        0.0,
+        0.7071
+      ],
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 0
+        }
+      }
+    },
+    {
+      "name": "green spot",
+      "translation": [
+        0.0,
+        4.2,
+        0.0
+      ],
+      "rotation": [
+        -0.7071,
+        0.0,
+        0.0,
+        0.7071
+      ],
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 1
+        }
+      }
+    },
+    {
+      "name": "blue spot",
+      "translation": [
+        2.0,
+        4.2,
+        0.0
+      ],
+      "rotation": [
+        -0.7071,
+        0.0,
+        0.0,
+        0.7071
+      ],
+      "extensions": {
+        "KHR_lights_punctual": {
+          "light": 2
+        }
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "primitives": [
+        {
+          "attributes": {
+            "POSITION": 0,
+            "NORMAL": 1,
+            "TEXCOORD_0": 2
+          },
+          "indices": 3,
+          "material": 0
+        }
+      ]
+    }
+  ],
+  "materials": [
+    {
+      "name": "stone",
+      "pbrMetallicRoughness": {
+        "baseColorFactor": [
+          0.8,
+          0.8,
+          0.8,
+          1.0
+        ],
+        "metallicFactor": 0.05,
+        "roughnessFactor": 0.35
+      }
+    }
+  ],
+  "accessors": [
+    {
+      "bufferView": 0,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3",
+      "min": [
+        -0.7,
+        -0.7,
+        -0.7
+      ],
+      "max": [
+        0.7,
+        0.7,
+        0.7
+      ]
+    },
+    {
+      "bufferView": 1,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC3"
+    },
+    {
+      "bufferView": 2,
+      "componentType": 5126,
+      "count": 24,
+      "type": "VEC2"
+    },
+    {
+      "bufferView": 3,
+      "componentType": 5125,
+      "count": 36,
+      "type": "SCALAR"
+    }
+  ],
+  "bufferViews": [
+    {
+      "buffer": 0,
+      "byteOffset": 0,
+      "byteLength": 288
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 288,
+      "byteLength": 288
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 576,
+      "byteLength": 192
+    },
+    {
+      "buffer": 0,
+      "byteOffset": 768,
+      "byteLength": 144
+    }
+  ],
+  "buffers": [
+    {
+      "byteLength": 912,
+      "uri": "data:application/octet-stream;base64,MzMzvzMzM78zMzM/MzMzPzMzM78zMzM/MzMzPzMzMz8zMzM/MzMzvzMzMz8zMzM/MzMzPzMzM78zMzO/MzMzvzMzM78zMzO/MzMzvzMzMz8zMzO/MzMzPzMzMz8zMzO/MzMzPzMzM78zMzM/MzMzPzMzM78zMzO/MzMzPzMzMz8zMzO/MzMzPzMzMz8zMzM/MzMzvzMzM78zMzO/MzMzvzMzM78zMzM/MzMzvzMzMz8zMzM/MzMzvzMzMz8zMzO/MzMzvzMzMz8zMzO/MzMzvzMzMz8zMzM/MzMzPzMzMz8zMzM/MzMzPzMzMz8zMzO/MzMzvzMzM78zMzM/MzMzvzMzM78zMzO/MzMzPzMzM78zMzO/MzMzPzMzM78zMzM/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AAAAAAAAAAAAAIC/AACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAPwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAACAvwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgD8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgL8AAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAIA/AACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AACAPwAAgD8AAIA/AAAAAAAAAAAAAAAAAAAAAAEAAAACAAAAAAAAAAIAAAADAAAABAAAAAUAAAAGAAAABAAAAAYAAAAHAAAACAAAAAkAAAAKAAAACAAAAAoAAAALAAAADAAAAA0AAAAOAAAADAAAAA4AAAAPAAAAEAAAABEAAAASAAAAEAAAABIAAAATAAAAFAAAABUAAAAWAAAAFAAAABYAAAAXAAAA"
+    }
+  ]
+}

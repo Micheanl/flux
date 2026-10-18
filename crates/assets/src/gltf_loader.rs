@@ -52,10 +52,19 @@ pub struct ModelSkin {
     pub inverse_bind_matrices: Vec<Mat4>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ModelInherit {
+    pub source: usize,
+    pub ratio: f32,
+    pub rotation: bool,
+    pub translation: bool,
+}
+
 pub struct ModelNode {
     pub name: String,
     pub parent: Option<usize>,
     pub transform: Transform,
+    pub inherit: Option<ModelInherit>,
     pub primitives: Vec<ModelPrimitive>,
 }
 
@@ -172,6 +181,7 @@ pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
                     rotation,
                     scale,
                 },
+                inherit: None,
                 primitives: Vec::new(),
             }
         })

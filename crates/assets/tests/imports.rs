@@ -116,6 +116,35 @@ fn loads_punctual_lights() {
 }
 
 #[test]
+fn loads_spot_lights() {
+    let model = load("spotlights.gltf");
+    assert_eq!(model.lights.len(), 3);
+    for light in &model.lights {
+        let assets::LightKind::Spot {
+            inner_cone,
+            outer_cone,
+            intensity,
+            ..
+        } = light.kind
+        else {
+            panic!("expected spot light");
+        };
+        assert!(inner_cone < outer_cone);
+        assert!(intensity > 1.0);
+    }
+}
+
+#[test]
+fn loads_mmd_motion() {
+    let clip = assets::load_mmd_animation(&fixture("motion_cube.pmx"), &fixture("motion_cube.vmd"))
+        .expect("MMD motion loading failed");
+    assert!(clip.duration > 0.0);
+    assert!(!clip.tracks.is_empty());
+    let pose = clip.sample(clip.duration * 0.5);
+    assert!(pose.iter().any(|pose| pose.rotation.is_some()));
+}
+
+#[test]
 fn loads_sandbox_demo_models() {
     let directory =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sandbox/assets/models");
@@ -129,7 +158,7 @@ fn loads_sandbox_demo_models() {
         })
         .collect();
     models.sort();
-    assert_eq!(models.len(), 4);
+    assert_eq!(models.len(), 5);
     for path in models {
         let model = load_gltf(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
         assert!(!model.meshes.is_empty(), "{}", path.display());

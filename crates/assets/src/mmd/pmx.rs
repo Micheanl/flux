@@ -21,11 +21,20 @@ pub struct PmxMaterial {
     pub surface_count: u32,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct PmxInherit {
+    pub source: i32,
+    pub ratio: f32,
+    pub rotation: bool,
+    pub translation: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct PmxBone {
     pub name: String,
     pub position: Vec3,
     pub parent: i32,
+    pub inherit: Option<PmxInherit>,
 }
 
 #[derive(Clone, Debug)]
@@ -325,7 +334,12 @@ impl<'a> Reader<'a> {
             let texture = self.texture_index()?;
             self.texture_index()?;
             self.u8()?;
-            self.texture_index()?;
+            let toon_reference = self.u8()?;
+            if toon_reference == 0 {
+                self.texture_index()?;
+            } else {
+                self.u8()?;
+            }
             self.text()?;
             let surface_count = self.u32()?;
             materials.push(PmxMaterial {
@@ -351,23 +365,30 @@ impl<'a> Reader<'a> {
             let parent = self.bone_index()?;
             self.i32()?;
             let flags = self.u16()?;
+            let mut inherit = None;
             if flags & 0x0001 != 0 {
                 self.bone_index()?;
             } else {
                 self.vec3()?;
             }
-            if flags & 0x0080 != 0 || flags & 0x0100 != 0 {
-                self.bone_index()?;
-                self.f32()?;
-            }
-            if flags & 0x0200 != 0 {
-                self.vec3()?;
+            if flags & 0x0100 != 0 || flags & 0x0200 != 0 {
+                let source = self.bone_index()?;
+                let ratio = self.f32()?;
+                inherit = Some(PmxInherit {
+                    source,
+                    ratio,
+                    rotation: flags & 0x0100 != 0,
+                    translation: flags & 0x0200 != 0,
+                });
             }
             if flags & 0x0400 != 0 {
                 self.vec3()?;
+            }
+            if flags & 0x0800 != 0 {
+                self.vec3()?;
                 self.vec3()?;
             }
-            if flags & 0x1000 != 0 {
+            if flags & 0x2000 != 0 {
                 self.i32()?;
             }
             if flags & 0x0020 != 0 {
@@ -393,6 +414,7 @@ impl<'a> Reader<'a> {
                 name,
                 position,
                 parent,
+                inherit,
             });
         }
         Ok(bones)
@@ -436,6 +458,7 @@ impl<'a> Reader<'a> {
                         self.u8()?;
                         self.vec4()?;
                         self.vec3()?;
+                        self.f32()?;
                         self.vec3()?;
                         self.vec4()?;
                         self.f32()?;

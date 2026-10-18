@@ -9,9 +9,8 @@ use renderer::{
 
 use crate::animation::{AnimationClip, AnimationTrack, Interpolation, TrackValues};
 use crate::error::AssetError;
-use crate::gltf_loader::{LoadedModel, ModelNode, ModelPrimitive, ModelSkin};
-use crate::image_loader::load_image;
-use crate::mmd::pmx::{PmxMaterial, PmxModel, load_pmx};
+use crate::gltf_loader::{LoadedModel, ModelInherit, ModelNode, ModelPrimitive, ModelSkin};
+use crate::mmd::pmx::{PmxMaterial, PmxModel, PmxVertex, load_pmx};
 use crate::mmd::vmd::{VmdMotion, load_vmd};
 
 const MODEL_SCALE: f32 = 0.08;
@@ -37,6 +36,7 @@ pub fn load_mmd(path: &Path, motion: Option<&Path>) -> Result<LoadedModel, Asset
 fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> LoadedModel {
     let mut textures = Vec::new();
     let mut texture_layers: HashMap<i32, u32> = HashMap::new();
+    let mut transparent_textures = std::collections::HashSet::new();
     for (index, _) in model.textures.iter().enumerate() {
         let material_uses = model
             .materials
@@ -46,10 +46,25 @@ fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> Loa
             continue;
         }
         let path = resolve_texture(directory, &model.textures[index]);
-        let texture = path
-            .as_deref()
-            .and_then(|path| load_image(path).ok())
-            .unwrap_or_else(|| TextureData::from_rgba8(1, 1, vec![255, 255, 255, 255]));
+        let (texture, has_alpha) = match path.as_deref() {
+            Some(path) => match load_image_with_alpha(path) {
+                Ok(texture) => texture,
+                Err(error) => {
+                    log::debug!("missing texture {:?}: {error}", model.textures[index]);
+                    (
+                        TextureData::from_rgba8(1, 1, vec![255, 255, 255, 255]),
+                        false,
+                    )
+                }
+            },
+            None => (
+                TextureData::from_rgba8(1, 1, vec![255, 255, 255, 255]),
+                false,
+            ),
+        };
+        if has_alpha {
+            transparent_textures.insert(index as i32);
+        }
         texture_layers.insert(index as i32, DEFAULT_TEXTURE_LAYERS + textures.len() as u32);
         textures.push(texture);
     }
@@ -79,6 +94,14 @@ fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> Loa
                 name: bone.name.clone(),
                 parent: bone.parent.try_into().ok(),
                 transform: Transform::from_translation(rest_positions[index] - parent_position),
+                inherit: bone.inherit.and_then(|inherit| {
+                    Some(ModelInherit {
+                        source: inherit.source.try_into().ok()?,
+                        ratio: inherit.ratio,
+                        rotation: inherit.rotation,
+                        translation: inherit.translation,
+                    })
+                }),
                 primitives: Vec::new(),
             }
         })
@@ -87,6 +110,17 @@ fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> Loa
     let mut meshes = Vec::new();
     let mut materials = Vec::new();
     let mut index_offset = 0usize;
+    let total_surfaces: u32 = model
+        .materials
+        .iter()
+        .map(|material| material.surface_count)
+        .sum();
+    log::debug!(
+        "mmd materials: {} entries, {} surfaces, {} indices",
+        model.materials.len(),
+        total_surfaces,
+        model.indices.len()
+    );
     let mesh_node = nodes.len();
     let mut primitives = Vec::new();
     for material in &model.materials {
@@ -97,30 +131,48 @@ fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> Loa
         if source.is_empty() {
             continue;
         }
+        let mut remap: HashMap<u32, u32> = HashMap::new();
+        let mut source_vertices = Vec::new();
+        let mut vertices = Vec::new();
         let mut indices = Vec::with_capacity(source.len());
         for triangle in source.as_chunks::<3>().0 {
-            indices.extend_from_slice(&[triangle[0], triangle[2], triangle[1]]);
+            for index in [triangle[0], triangle[2], triangle[1]] {
+                let remapped = match remap.get(&index) {
+                    Some(remapped) => *remapped,
+                    None => {
+                        let remapped = vertices.len() as u32;
+                        remap.insert(index, remapped);
+                        let vertex =
+                            model
+                                .vertices
+                                .get(index as usize)
+                                .cloned()
+                                .unwrap_or(PmxVertex {
+                                    position: Vec3::ZERO,
+                                    normal: Vec3::Y,
+                                    uv: foundation::Vec2::ZERO,
+                                    joints: [0; 4],
+                                    weights: [0.0; 4],
+                                });
+                        source_vertices.push(convert_position(vertex.position));
+                        vertices.push(Vertex {
+                            position: convert_position(vertex.position).to_array(),
+                            normal: convert_normal(vertex.normal).to_array(),
+                            uv: vertex.uv.to_array(),
+                            tangent: [1.0, 0.0, 0.0, 1.0],
+                            joints: vertex.joints,
+                            weights: vertex.weights,
+                        });
+                        remapped
+                    }
+                };
+                indices.push(remapped);
+            }
         }
         let mesh = MeshData {
-            vertices: model
-                .vertices
-                .iter()
-                .map(|vertex| Vertex {
-                    position: convert_position(vertex.position).to_array(),
-                    normal: convert_normal(vertex.normal).to_array(),
-                    uv: vertex.uv.to_array(),
-                    tangent: [1.0, 0.0, 0.0, 1.0],
-                    joints: vertex.joints,
-                    weights: vertex.weights,
-                })
-                .collect(),
+            vertices,
             indices,
-            bounds: Aabb::from_points(
-                model
-                    .vertices
-                    .iter()
-                    .map(|vertex| convert_position(vertex.position)),
-            ),
+            bounds: Aabb::from_points(source_vertices),
         };
         primitives.push(ModelPrimitive {
             mesh: meshes.len() as u32,
@@ -129,13 +181,18 @@ fn convert(model: PmxModel, motion: Option<&VmdMotion>, directory: &Path) -> Loa
             morph: None,
         });
         meshes.push(mesh);
-        materials.push(convert_material(material, &texture_layers));
+        materials.push(convert_material(
+            material,
+            &texture_layers,
+            transparent_textures.contains(&material.texture),
+        ));
     }
 
     nodes.push(ModelNode {
         name: model.name.clone(),
         parent: None,
         transform: Transform::default(),
+        inherit: None,
         primitives,
     });
 
@@ -188,7 +245,11 @@ fn resolve_texture(directory: &Path, name: &str) -> Option<std::path::PathBuf> {
         })
 }
 
-fn convert_material(material: &PmxMaterial, texture_layers: &HashMap<i32, u32>) -> MaterialData {
+fn convert_material(
+    material: &PmxMaterial,
+    texture_layers: &HashMap<i32, u32>,
+    transparent: bool,
+) -> MaterialData {
     let albedo = texture_layers
         .get(&material.texture)
         .copied()
@@ -207,17 +268,63 @@ fn convert_material(material: &PmxMaterial, texture_layers: &HashMap<i32, u32>) 
         flags: Vec4::ZERO,
     };
     let data = data.with_double_sided(material.double_sided);
-    if material.diffuse.w < 0.999 {
+    if transparent || material.diffuse.w < 0.999 {
         data.with_alpha_mode(AlphaMode::Blend, 0.5)
     } else {
         data
     }
 }
 
+fn load_image_with_alpha(path: &Path) -> Result<(TextureData, bool), AssetError> {
+    let mut image = image::open(path)?.to_rgba8();
+    let alpha_path = path.with_file_name(format!(
+        "{}_Alpha.png",
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or_default()
+    ));
+    let allow_alpha = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.starts_with("Bangs")
+                || name.starts_with("Hair")
+                || name.starts_with("Tail")
+                || name.starts_with("Fur")
+        });
+    if allow_alpha && alpha_path.exists() {
+        let mask = image::open(&alpha_path)?.to_luma8();
+        if mask.dimensions() == image.dimensions() {
+            for (pixel, mask) in image.pixels_mut().zip(mask.pixels()) {
+                pixel.0[3] = ((pixel.0[3] as u16 * mask.0[0] as u16) / 255) as u8;
+            }
+        }
+    }
+    let (width, height) = image.dimensions();
+    let has_alpha = image.pixels().any(|pixel| pixel.0[3] < 250);
+    Ok((
+        TextureData::from_rgba8(width, height, image.into_raw()),
+        has_alpha,
+    ))
+}
+
+pub fn load_mmd_animation(
+    model_path: &Path,
+    motion_path: &Path,
+) -> Result<AnimationClip, AssetError> {
+    let model = load_pmx(model_path)?;
+    let motion = load_vmd(motion_path)?;
+    convert_motion(&motion, &model)
+        .pop()
+        .ok_or_else(|| AssetError::Unsupported("motion does not match model bones".to_string()))
+}
+
 fn convert_motion(motion: &VmdMotion, model: &PmxModel) -> Vec<AnimationClip> {
     let mut tracks = Vec::new();
+    let mut unmatched = Vec::new();
     for track in &motion.bones {
         let Some(node) = model.bones.iter().position(|bone| bone.name == track.name) else {
+            unmatched.push(track.name.as_str());
             continue;
         };
         if track.frames.is_empty() {
@@ -272,6 +379,12 @@ fn convert_motion(motion: &VmdMotion, model: &PmxModel) -> Vec<AnimationClip> {
             values: TrackValues::Rotations(rotations),
         });
     }
+    log::debug!(
+        "mmd motion: {} tracks matched, {} unmatched: {:?}",
+        tracks.len() / 2,
+        unmatched.len(),
+        &unmatched[..unmatched.len().min(12)]
+    );
     if tracks.is_empty() {
         return Vec::new();
     }
