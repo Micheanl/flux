@@ -30,6 +30,27 @@ struct VertexOutput {
     @location(4) @interpolate(flat) material_index: u32,
 };
 
+fn safe_normalize(value: vec3<f32>) -> vec3<f32> {
+    let length_squared = dot(value, value);
+    if (length_squared > 1e-8) {
+        return value * inverseSqrt(length_squared);
+    }
+    return vec3<f32>(0.0);
+}
+
+fn orthogonal_tangent(normal: vec3<f32>, tangent: vec3<f32>) -> vec3<f32> {
+    let projected = safe_normalize(tangent - normal * dot(normal, tangent));
+    if (dot(projected, projected) > 0.5) {
+        return projected;
+    }
+    let fallback = select(
+        vec3<f32>(0.0, 0.0, 1.0),
+        vec3<f32>(1.0, 0.0, 0.0),
+        abs(normal.z) > 0.9,
+    );
+    return safe_normalize(cross(normal, fallback));
+}
+
 fn skin_matrix(instance: Instance, joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
     let base = instance.skin_offset;
     return joint_matrices[base + joints.x] * weights.x
@@ -130,7 +151,7 @@ fn fs_main(input: VertexOutput, @builtin(front_facing) front_facing: bool) -> @l
     if (!front_facing) {
         n = -n;
     }
-    let t = normalize(input.tangent.xyz - n * dot(n, input.tangent.xyz));
+    let t = orthogonal_tangent(n, input.tangent.xyz);
     let b = cross(n, t) * input.tangent.w;
     let normal_texture = textureSample(normal_map, linear_sampler, uv, i32(material.textures.y));
     let normal_sample = normal_texture.xyz * 2.0 - 1.0;
