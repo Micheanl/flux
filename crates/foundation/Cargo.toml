@@ -1,0 +1,11 @@
+[package]
+name = "foundation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck.workspace = true
+glam.workspace = true
+web-time.workspace = true
