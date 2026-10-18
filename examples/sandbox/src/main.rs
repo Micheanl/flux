@@ -74,6 +74,8 @@ struct CharacterDemo {
     pitch: f32,
     facing: f32,
     third_person: bool,
+    camera_distance: f32,
+    camera_position: Vec3,
     motions: Vec<PathBuf>,
     motion_index: usize,
     idle_motion: Option<usize>,
@@ -321,6 +323,8 @@ impl Sandbox {
             pitch: 0.12,
             facing: std::f32::consts::PI,
             third_person: true,
+            camera_distance: 3.4,
+            camera_position: Vec3::new(0.0, 1.9, 3.4),
             motions,
             motion_index: idle_motion.unwrap_or(0),
             idle_motion,
@@ -339,6 +343,10 @@ impl Sandbox {
             let motion = input.raw_motion();
             state.yaw -= motion.x * 0.0022;
             state.pitch = (state.pitch - motion.y * 0.0022).clamp(-0.85, 0.85);
+        }
+        let scroll = input.scroll();
+        if scroll.abs() > 0.0 {
+            state.camera_distance = (state.camera_distance - scroll * 0.4).clamp(1.6, 7.0);
         }
         if input.key_pressed(KeyCode::KeyV) {
             state.third_person = !state.third_person;
@@ -443,10 +451,23 @@ impl Sandbox {
                 pitch.sin(),
                 -yaw.cos() * pitch.cos(),
             );
-            let camera = target - forward * 3.4;
-            let camera = Vec3::new(camera.x, camera.y.max(0.35), camera.z);
-            let (camera_yaw, camera_pitch) = looking_at(camera, target);
-            engine.set_camera_pose(camera, camera_yaw, camera_pitch);
+            let mut desired = target - forward * state.camera_distance;
+            desired.y = desired.y.max(0.35);
+            let direction = (desired - target).normalize_or_zero();
+            let mut distance = state.camera_distance;
+            let colliders = engine.scene().collision_boxes_except(&excluded);
+            for obb in &colliders {
+                if let Some(hit) = obb.ray_intersection(target, direction)
+                    && hit < distance
+                {
+                    distance = (hit - 0.2).max(0.5);
+                }
+            }
+            let desired = target + direction * distance;
+            let smoothing = 1.0 - (-14.0 * dt).exp();
+            state.camera_position = state.camera_position.lerp(desired, smoothing);
+            let (camera_yaw, camera_pitch) = looking_at(state.camera_position, target);
+            engine.set_camera_pose(state.camera_position, camera_yaw, camera_pitch);
         } else {
             engine.set_camera_pose(state.player.eye(), state.yaw, state.pitch);
         }

@@ -11,6 +11,7 @@ pub struct Input {
     keys_pressed: HashSet<KeyCode>,
     mouse_held: HashSet<MouseButton>,
     raw_motion: Vec2,
+    scroll: f32,
     focused: bool,
 }
 
@@ -29,6 +30,10 @@ impl Input {
 
     pub fn raw_motion(&self) -> Vec2 {
         self.raw_motion
+    }
+
+    pub fn scroll(&self) -> f32 {
+        self.scroll
     }
 
     pub(crate) fn on_focused(&mut self, focused: bool) {
@@ -66,6 +71,12 @@ impl Input {
         }
     }
 
+    pub(crate) fn on_mouse_wheel(&mut self, delta: f32) {
+        if self.focused {
+            self.scroll += delta;
+        }
+    }
+
     pub(crate) fn on_mouse_motion(&mut self, delta: Vec2) {
         if self.focused {
             self.raw_motion += delta;
@@ -75,5 +86,6 @@ impl Input {
     pub(crate) fn end_frame(&mut self) {
         self.keys_pressed.clear();
         self.raw_motion = Vec2::ZERO;
+        self.scroll = 0.0;
     }
 }

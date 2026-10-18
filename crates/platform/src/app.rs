@@ -136,6 +136,15 @@ impl<A: Application> ApplicationHandler for Runner<A> {
             WindowEvent::MouseInput { state, button, .. } => {
                 self.input.on_mouse_button(button, state);
             }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let amount = match delta {
+                    winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                    winit::event::MouseScrollDelta::PixelDelta(position) => {
+                        position.y as f32 / 60.0
+                    }
+                };
+                self.input.on_mouse_wheel(amount);
+            }
             WindowEvent::RedrawRequested => {
                 let time = self.clock.tick();
                 let flow = self.app.on_frame(&self.input, time);
