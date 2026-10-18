@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use foundation::{Transform, Vec3};
+use foundation::{Aabb, Mat4, Transform, Vec3};
 use graphics::{Gpu, GpuConfig, Surface};
 use platform::{Flow, Input, WindowRef};
 use renderer::{DEFAULT_TEXTURE_LAYERS, MeshData, RenderOutcome, Renderer, RendererConfig};
@@ -40,6 +40,7 @@ pub struct Engine {
     last_frame: Instant,
     title_timer: f32,
     models: Vec<ModelRuntime>,
+    model_bounds: Vec<(scene::Entity, Aabb)>,
 }
 
 impl Engine {
@@ -73,6 +74,7 @@ impl Engine {
             last_frame: Instant::now(),
             title_timer: 0.0,
             models: Vec::new(),
+            model_bounds: Vec::new(),
         })
     }
 
@@ -147,6 +149,7 @@ impl Engine {
     ) -> Result<scene::Entity, assets::AssetError> {
         let path = path.as_ref();
         let model = assets::load_gltf(path)?;
+        let bounds = model_bounds(&model);
         let texture_offset = self.scene.render().textures.len() as u32;
         let material_offset = self.scene.render().materials.len() as u32;
         let mesh_count = model.meshes.len();
@@ -285,6 +288,10 @@ impl Engine {
             });
         }
 
+        self.model_bounds
+            .retain(|(entity, _)| self.scene.world().get::<Transform>(*entity).is_some());
+        self.model_bounds.push((root, bounds));
+
         log::info!(
             "loaded model {}: {} nodes, {} primitives, {} meshes, {} materials, {} animations",
             path.display(),
@@ -299,6 +306,30 @@ impl Engine {
         }
         let _ = (texture_count, animation_names);
         Ok(root)
+    }
+
+    pub fn frame_model(&mut self, model: scene::Entity) -> bool {
+        let Some((_, bounds)) = self
+            .model_bounds
+            .iter()
+            .find(|(entity, _)| *entity == model)
+            .copied()
+        else {
+            return false;
+        };
+        if !bounds.is_valid() {
+            return false;
+        }
+        let center = bounds.center();
+        let radius = bounds.extents().length().max(0.5);
+        let direction = Vec3::new(0.65, 0.45, 0.85).normalize();
+        let distance = radius / (30f32.to_radians()).sin() * 1.2;
+        let pitch = (-direction.y).asin();
+        let yaw = direction.x.atan2(direction.z);
+        self.set_camera_pose(center + direction * distance, yaw, pitch);
+        self.scene
+            .set_camera_transform(self.camera_entity, self.camera.transform());
+        true
     }
 
     pub fn animation_count(&self, model: scene::Entity) -> usize {
@@ -416,4 +447,42 @@ impl Engine {
             }
         }
     }
+}
+
+fn model_bounds(model: &assets::LoadedModel) -> Aabb {
+    let mut worlds = vec![None; model.nodes.len()];
+    for index in 0..model.nodes.len() {
+        node_world(model, index, &mut worlds);
+    }
+    let mut bounds = Aabb::invalid();
+    for (index, node) in model.nodes.iter().enumerate() {
+        let Some(world) = worlds[index] else {
+            continue;
+        };
+        for primitive in &node.primitives {
+            let Some(mesh) = model.meshes.get(primitive.mesh as usize) else {
+                continue;
+            };
+            bounds = bounds.union(&mesh.bounds.transform(&world));
+        }
+    }
+    bounds
+}
+
+fn node_world(
+    model: &assets::LoadedModel,
+    index: usize,
+    worlds: &mut [Option<Mat4>],
+) -> Option<Mat4> {
+    if let Some(world) = worlds.get(index).copied().flatten() {
+        return Some(world);
+    }
+    let node = model.nodes.get(index)?;
+    let local = node.transform.matrix();
+    let world = match node.parent {
+        Some(parent) => node_world(model, parent, worlds)? * local,
+        None => local,
+    };
+    worlds[index] = Some(world);
+    Some(world)
 }

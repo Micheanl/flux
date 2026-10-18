@@ -65,6 +65,19 @@ impl Aabb {
         Self::from_center_extents(center, world_extents)
     }
 
+    pub fn union(&self, other: &Self) -> Self {
+        if !self.is_valid() {
+            return *other;
+        }
+        if !other.is_valid() {
+            return *self;
+        }
+        Self {
+            min: self.min.min(other.min),
+            max: self.max.max(other.max),
+        }
+    }
+
     pub fn corners(&self) -> [Vec3; 8] {
         [
             Vec3::new(self.min.x, self.min.y, self.min.z),
