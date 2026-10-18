@@ -178,3 +178,82 @@ fn loads_animation_tracks() {
     assert!((translation - foundation::Vec3::new(0.0, 1.5, 0.0)).length() < 1e-5);
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn loads_skinned_primitive() {
+    let mut bytes = Vec::new();
+    for position in [[-1.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for value in position {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    for index in [0u16, 1, 2] {
+        bytes.extend_from_slice(&index.to_le_bytes());
+    }
+    for joints in [[0u16, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]] {
+        for value in joints {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    for weights in [
+        [1.0f32, 0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+    ] {
+        for value in weights {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    for matrix in [[
+        1.0f32, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0,
+    ]] {
+        for value in matrix {
+            bytes.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+
+    let json = format!(
+        r#"{{
+  "asset": {{ "version": "2.0" }},
+  "scene": 0,
+  "scenes": [ {{ "nodes": [0, 1] }} ],
+  "nodes": [
+    {{ "name": "bone" }},
+    {{ "name": "skinned", "mesh": 0, "skin": 0 }}
+  ],
+  "meshes": [ {{ "primitives": [ {{ "attributes": {{ "POSITION": 0, "JOINTS_0": 2, "WEIGHTS_0": 3 }}, "indices": 1, "material": 0 }} ] }} ],
+  "materials": [ {{ "pbrMetallicRoughness": {{ "baseColorFactor": [1.0, 0.5, 0.2, 1.0] }} }} ],
+  "skins": [ {{ "joints": [0], "inverseBindMatrices": 4 }} ],
+  "accessors": [
+    {{ "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+       "min": [-1.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] }},
+    {{ "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }},
+    {{ "bufferView": 2, "componentType": 5123, "count": 3, "type": "VEC4" }},
+    {{ "bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4" }},
+    {{ "bufferView": 4, "componentType": 5126, "count": 1, "type": "MAT4" }}
+  ],
+  "bufferViews": [
+    {{ "buffer": 0, "byteOffset": 0, "byteLength": 36 }},
+    {{ "buffer": 0, "byteOffset": 36, "byteLength": 6 }},
+    {{ "buffer": 0, "byteOffset": 42, "byteLength": 24 }},
+    {{ "buffer": 0, "byteOffset": 66, "byteLength": 48 }},
+    {{ "buffer": 0, "byteOffset": 114, "byteLength": 64 }}
+  ],
+  "buffers": [ {{ "byteLength": {}, "uri": "data:application/octet-stream;base64,{}" }} ]
+}}"#,
+        bytes.len(),
+        base64_encode(&bytes)
+    );
+
+    let path = temp_path("skinned.gltf");
+    std::fs::write(&path, json).unwrap();
+    let model = load_gltf(&path).expect("glTF loading failed");
+    assert_eq!(model.skins.len(), 1);
+    assert_eq!(model.skins[0].joints, vec![0]);
+    assert_eq!(model.skins[0].inverse_bind_matrices.len(), 1);
+    assert_eq!(model.nodes[1].primitives.len(), 1);
+    assert_eq!(model.nodes[1].primitives[0].skin, Some(0));
+    assert_eq!(model.meshes[0].vertices[0].joints, [0; 4]);
+    assert_eq!(model.meshes[0].vertices[0].weights, [1.0, 0.0, 0.0, 0.0]);
+    let _ = std::fs::remove_file(path);
+}

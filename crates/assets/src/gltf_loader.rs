@@ -16,7 +16,13 @@ pub struct LoadedModel {
     pub meshes: Vec<MeshData>,
     pub materials: Vec<MaterialData>,
     pub textures: Vec<TextureData>,
+    pub skins: Vec<ModelSkin>,
     pub animations: Vec<AnimationClip>,
+}
+
+pub struct ModelSkin {
+    pub joints: Vec<usize>,
+    pub inverse_bind_matrices: Vec<Mat4>,
 }
 
 pub struct ModelNode {
@@ -29,6 +35,7 @@ pub struct ModelNode {
 pub struct ModelPrimitive {
     pub mesh: u32,
     pub material: u32,
+    pub skin: Option<u32>,
 }
 
 pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
@@ -56,6 +63,27 @@ pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
         .map(|material| convert_material(&material, &texture_layers))
         .collect();
 
+    let skins: Vec<ModelSkin> = document
+        .skins()
+        .map(|skin| {
+            let reader = skin.reader(|buffer| Some(&buffers[buffer.index()].0));
+            let joints: Vec<usize> = skin.joints().map(|node| node.index()).collect();
+            let mut inverse_bind_matrices: Vec<Mat4> = reader
+                .read_inverse_bind_matrices()
+                .map(|matrices| {
+                    matrices
+                        .map(|matrix| Mat4::from_cols_array_2d(&matrix))
+                        .collect()
+                })
+                .unwrap_or_default();
+            inverse_bind_matrices.resize(joints.len(), Mat4::IDENTITY);
+            ModelSkin {
+                joints,
+                inverse_bind_matrices,
+            }
+        })
+        .collect();
+
     let mut nodes: Vec<ModelNode> = document
         .nodes()
         .map(|node| {
@@ -80,17 +108,22 @@ pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
         let Some(mesh) = node.mesh() else {
             continue;
         };
+        let node_skin = node.skin().map(|skin| skin.index() as u32);
         for primitive in mesh.primitives() {
             if primitive.mode() != gltf::mesh::Mode::Triangles {
                 log::warn!("skipping non-triangle primitive: {:?}", primitive.mode());
                 continue;
             }
-            let Some(mesh_data) = read_primitive(&primitive, &buffers) else {
+            let Some((mesh_data, has_skin)) = read_primitive(&primitive, &buffers) else {
                 continue;
             };
+            if node_skin.is_some() && !has_skin {
+                log::warn!("skinned primitive is missing JOINT/WEIGHT attributes");
+            }
             nodes[node.index()].primitives.push(ModelPrimitive {
                 mesh: meshes.len() as u32,
                 material: primitive.material().index().unwrap_or(0) as u32,
+                skin: if has_skin { node_skin } else { None },
             });
             meshes.push(mesh_data);
         }
@@ -116,6 +149,7 @@ pub fn load_gltf(path: &Path) -> Result<LoadedModel, AssetError> {
         meshes,
         materials,
         textures,
+        skins,
         animations,
     })
 }
@@ -204,10 +238,19 @@ fn load_animations(
 fn read_primitive(
     primitive: &gltf::Primitive<'_>,
     buffers: &[gltf::buffer::Data],
-) -> Option<MeshData> {
+) -> Option<(MeshData, bool)> {
     let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()].0));
     let positions: Vec<[f32; 3]> = reader.read_positions()?.collect();
     let indices: Vec<u32> = reader.read_indices()?.into_u32().collect();
+    let joints: Vec<[u16; 4]> = reader
+        .read_joints(0)
+        .map(|joints| joints.into_u16().collect())
+        .unwrap_or_default();
+    let weights: Vec<[f32; 4]> = reader
+        .read_weights(0)
+        .map(|weights| weights.into_f32().collect())
+        .unwrap_or_default();
+    let has_skin = !joints.is_empty() && !weights.is_empty();
     let uvs: Vec<[f32; 2]> = reader
         .read_tex_coords(0)
         .map(|coords| coords.into_f32().collect())
@@ -229,14 +272,19 @@ fn read_primitive(
             normal: normals.get(index).copied().unwrap_or([0.0, 1.0, 0.0]),
             uv: uvs.get(index).copied().unwrap_or([0.0, 0.0]),
             tangent: tangents.get(index).copied().unwrap_or([1.0, 0.0, 0.0, 1.0]),
+            joints: joints.get(index).copied().unwrap_or([0; 4]),
+            weights: weights.get(index).copied().unwrap_or([0.0; 4]),
         })
         .collect();
 
-    Some(MeshData {
-        vertices,
-        indices,
-        bounds: Aabb::from_points(positions.iter().map(|position| Vec3::from_array(*position))),
-    })
+    Some((
+        MeshData {
+            vertices,
+            indices,
+            bounds: Aabb::from_points(positions.iter().map(|position| Vec3::from_array(*position))),
+        },
+        has_skin,
+    ))
 }
 
 fn convert_material(
