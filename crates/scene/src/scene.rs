@@ -129,6 +129,12 @@ impl Scene {
         }
     }
 
+    pub fn update_mesh(&mut self, mesh: u32, data: MeshData) {
+        if let Some(slot) = self.render.meshes.get_mut(mesh as usize) {
+            *slot = data;
+        }
+    }
+
     pub fn collision_boxes(&self) -> Vec<physics::Obb> {
         let render = &self.render;
         let mut boxes = Vec::new();
