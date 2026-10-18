@@ -211,6 +211,10 @@ pub fn target_bindings(
                     binding: 2,
                     resource: BindingResource::Sampler(&passes.linear_sampler),
                 },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::TextureView(&targets.depth_view),
+                },
             ],
         })
     };

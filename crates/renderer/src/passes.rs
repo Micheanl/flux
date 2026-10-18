@@ -182,6 +182,7 @@ impl Passes {
                     TextureViewDimension::D2,
                 ),
                 sampler_entry(2, SamplerBindingType::Filtering),
+                texture_entry(3, TextureSampleType::Depth, TextureViewDimension::D2),
             ],
         });
 
